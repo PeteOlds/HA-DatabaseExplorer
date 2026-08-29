@@ -30,11 +30,12 @@ local-only, zero telemetry.
 ### Standalone Docker
 
 ```bash
+docker build -t ha-db-explorer .
 docker run -d --name ha-db-explorer \
   -p 8099:8099 \
   -v ha_db_explorer_data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  peteolds/ha-database-explorer:latest
+  ha-db-explorer
 ```
 
 ## Adding databases
