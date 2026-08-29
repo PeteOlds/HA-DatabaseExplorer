@@ -34,4 +34,4 @@ options:
 schema:
   log_level: list(info|debug|warning|error)
   scan_cron: str
-  manual_sizes: str(optional)
+  manual_sizes: str?
