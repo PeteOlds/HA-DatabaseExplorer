@@ -1,0 +1,5 @@
+name: HA Database Explorer
+description: Audit storage, record retention, and cross-database entity overlap across your Home Assistant databases (SQLite, MariaDB/MySQL, InfluxDB 1.8). Privacy-first, local-only.
+url: https://github.com/PeteOlds/HA-DatabaseExplorer
+addons:
+  - ha_database_explorer
