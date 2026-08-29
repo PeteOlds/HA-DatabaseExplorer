@@ -28,9 +28,10 @@ options:
   # CRON expression for the scheduled deep scan (HA local time). Default 03:30 daily.
   scan_cron: "30 3 * * *"
   # Manual size entry (MB) used when a database exposes no disk-size API (e.g. InfluxDB
-  # without socket access). Keyed by connection_name.
-  manual_sizes: {}
+  # without socket access). JSON object keyed by connection_name, e.g.
+  # {"Main MariaDB Recorder": 512}.
+  manual_sizes: "{}"
 schema:
   log_level: list(info|debug|warning|error)
   scan_cron: str
-  manual_sizes: dict(optional)
+  manual_sizes: str(optional)

@@ -13,6 +13,7 @@ from .cache import (
     replace_overlap,
     upsert_database,
 )
+from .config import MANUAL_SIZES
 from .connectors import build_connector
 from .store import load_connections
 
@@ -60,6 +61,8 @@ async def run_scan(job_id: str) -> None:
                 size = conn.get("manual_size_mb")
                 if size is None:
                     size = await connector.total_size_mb()
+                if size is None:
+                    size = MANUAL_SIZES.get(name)
                 entities = await connector.entity_metrics()
                 domains = await connector.domain_metrics(entities)
                 db_id = await upsert_database(conn["engine"], name, size, "connected")
