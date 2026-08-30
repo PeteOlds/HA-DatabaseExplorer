@@ -37,6 +37,11 @@ async def lifespan(app: FastAPI):
     # first boot; it retries for a few minutes instead of blocking startup.
     if not load_connections():
         asyncio.create_task(_bootstrap_discover())
+    else:
+        # Connections exist but the scan-results cache may be empty (e.g. after a
+        # restart). Kick off one scan so the UI has something to show.
+        if not await get_databases():
+            _spawn_scan(uuid.uuid4().hex)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         lambda: _spawn_scan(uuid.uuid4().hex),
@@ -105,7 +110,33 @@ class DBConfig(BaseModel):
 
 @app.get("/api/databases")
 async def list_databases():
-    return await get_databases()
+    # Return the configured connections, merged with their latest scan status so the
+    # UI shows databases immediately even before a scan has populated the cache.
+    conns = load_connections()
+    rows = await get_databases()
+    latest: dict[str, dict] = {}
+    for r in rows:
+        name = r.get("connection_name")
+        if name not in latest or (r.get("last_scanned") or "") >= (
+            latest[name].get("last_scanned") or ""
+        ):
+            latest[name] = r
+    out = []
+    for c in conns:
+        name = c.get("connection_name")
+        cached = latest.get(name, {})
+        out.append(
+            {
+                "id": cached.get("id"),
+                "engine": c.get("engine"),
+                "connection_name": name,
+                "status": cached.get("status"),
+                "total_size_mb": cached.get("total_size_mb"),
+                "last_scanned": cached.get("last_scanned"),
+                "detected": c.get("detected"),
+            }
+        )
+    return out
 
 
 @app.post("/api/databases")
