@@ -163,7 +163,9 @@ async def list_databases():
 
 @app.post("/api/databases")
 async def save_database(cfg: DBConfig):
+    import logging
     conn = cfg.model_dump(exclude_none=True)
+    logging.info(f"Save connection for {cfg.connection_name}: engine={cfg.engine}, host={cfg.host}, port={cfg.port}, user={cfg.user}, database={cfg.database}, password={'*' * len(cfg.password) if cfg.password else 'None'}")
     add_connection(conn)
     # Test the connection and update status immediately
     test_result = None
@@ -173,7 +175,6 @@ async def save_database(cfg: DBConfig):
         status = "connected" if test_result else "auth_failed"
         await upsert_database(cfg.engine, cfg.connection_name, None, status)
     except Exception as exc:
-        import logging
         logging.error(f"Connection test failed for {cfg.connection_name}: {exc}")
         await upsert_database(cfg.engine, cfg.connection_name, None, "error")
     return {"saved": True, "config": safe_config_dump(conn), "test_result": test_result}
@@ -210,11 +211,14 @@ async def discover():
 
 @app.post("/api/databases/test-connection")
 async def test_connection(cfg: DBConfig):
+    import logging
     try:
         cfg_dict = cfg.model_dump(exclude_none=True)
+        logging.info(f"Test connection for {cfg.connection_name}: engine={cfg.engine}, host={cfg.host}, port={cfg.port}, user={cfg.user}, database={cfg.database}, password={'*' * len(cfg.password) if cfg.password else 'None'}")
         connector = build_connector(cfg.engine, cfg.connection_name, cfg_dict)
         ok = await connector.test_connection()
     except Exception as exc:
+        logging.error(f"Test connection exception: {exc}")
         return {"connected": False, "error": str(exc)}
     return {"connected": ok}
 
