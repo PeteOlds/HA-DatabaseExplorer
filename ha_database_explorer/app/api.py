@@ -19,6 +19,7 @@ from .cache import (
     get_entity_metrics,
     get_overlap,
     init_cache,
+    upsert_database,
 )
 from .config import DEFAULT_SCAN_CRON
 from .connectors import build_connector
@@ -67,7 +68,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.7", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.8", lifespan=lifespan)
 
 
 @app.get("/api/health")
