@@ -33,18 +33,10 @@ async def lifespan(app: FastAPI):
     await init_cache()
     # Zero-config bootstrap: if no databases are configured yet, auto-discover and
     # persist whatever the environment exposes so the add-on works with no user input.
-    # Retry briefly because the add-on container's DNS may not be ready at first boot.
+    # Runs as a background task because the add-on container's DNS may not be ready at
+    # first boot; it retries for a few minutes instead of blocking startup.
     if not load_connections():
-        for _ in range(15):
-            try:
-                found = await discover_all()
-            except Exception:
-                found = []
-            if found:
-                for entry in found:
-                    add_connection(entry)
-                break
-            await asyncio.sleep(2)
+        asyncio.create_task(_bootstrap_discover())
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         lambda: _spawn_scan(uuid.uuid4().hex),
@@ -77,6 +69,24 @@ def _spawn_scan(job_id: str) -> None:
 
     task = asyncio.create_task(_run())
     task.add_done_callback(lambda t: t.exception())
+
+
+async def _bootstrap_discover(max_attempts: int = 90, interval: float = 2.0) -> None:
+    """Best-effort auto-discovery that keeps retrying after startup so it survives
+    the add-on container's DNS not being ready at first boot."""
+    for _ in range(max_attempts):
+        try:
+            found = await discover_all()
+        except Exception:
+            found = []
+        if found:
+            for entry in found:
+                try:
+                    add_connection(entry)
+                except Exception:
+                    pass
+            return
+        await asyncio.sleep(interval)
 
 
 class DBConfig(BaseModel):
