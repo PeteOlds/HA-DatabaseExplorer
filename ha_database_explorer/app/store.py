@@ -55,12 +55,16 @@ def remove_connection(name: str) -> list[dict]:
 def update_connection(name: str, fields: dict) -> list[dict]:
     """Merge ``fields`` into the stored connection matching ``name``.
 
-    An empty/omitted password is preserved so editing other fields never wipes
-    existing credentials."""
+    ``connection_name`` and ``engine`` are immutable — changing them would
+    orphan scan-cache rows and create duplicate keys, so they are ignored
+    even if supplied. An empty/omitted password is preserved so editing
+    other fields never wipes existing credentials."""
     conns = load_connections()
     for c in conns:
         if c.get("connection_name") == name:
             for k, v in fields.items():
+                if k in ("connection_name", "engine"):
+                    continue
                 if k == "password" and (v is None or v == ""):
                     continue
                 c[k] = v

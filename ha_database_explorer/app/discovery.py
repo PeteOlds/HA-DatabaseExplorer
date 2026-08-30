@@ -7,6 +7,7 @@ import asyncio
 import aiodocker
 
 from .config import DOCKER_SOCK, PRESET_HOSTS, PRESET_PORTS, SQLITE_PATHS
+from .ha_config import discover_ha_config
 
 
 async def _tcp_probe(host: str, port: int, timeout: float = 2.0) -> bool:
@@ -103,9 +104,13 @@ async def discover_presets() -> list[dict]:
 
 
 async def discover_all() -> list[dict]:
-    """Combine all discovery sources, de-duplicated by (engine, host/path)."""
+    """Combine all discovery sources, de-duplicated by (engine, host/path/database)."""
     results = await asyncio.gather(
-        discover_docker(), discover_sqlite(), discover_presets(), return_exceptions=True
+        discover_docker(),
+        discover_sqlite(),
+        discover_presets(),
+        discover_ha_config(),
+        return_exceptions=True,
     )
     seen: set[tuple] = set()
     merged: list[dict] = []
@@ -113,7 +118,7 @@ async def discover_all() -> list[dict]:
         if isinstance(r, Exception):
             continue
         for entry in r:
-            key = (entry["engine"], entry.get("host") or entry.get("path"))
+            key = (entry["engine"], entry.get("host") or entry.get("path"), entry.get("database"))
             if key in seen:
                 continue
             seen.add(key)

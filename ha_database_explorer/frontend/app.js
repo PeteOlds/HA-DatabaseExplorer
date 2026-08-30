@@ -52,14 +52,15 @@ async function renderDiscovery() {
     const cfgCard = el("div", { class: "card" }, "<h3>Configured databases</h3>");
     const cfgTable = el("table");
     cfgTable.innerHTML =
-      "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Last scanned</th></tr></thead>";
+      "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th></th></tr></thead>";
     const cfgBody = el("tbody");
     configured.forEach((d) => {
       const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
+      const hostLabel = d.host ? `${d.host}${d.port ? ":" + d.port : ""}` : d.path || "—";
       const tr = el(
         "tr",
         {},
-        `<td>${d.connection_name}</td><td>${d.engine}</td>` +
+        `<td>${d.connection_name}</td><td>${d.engine}</td><td>${hostLabel}</td>` +
           `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
           `<td>${scanned}</td>`
       );
@@ -98,7 +99,9 @@ async function renderDiscovery() {
       btn.disabled = false;
     }
   };
-  view.append(card, manualForm());
+  const manualCard = manualForm();
+  manualCard.id = "manual-card";
+  view.append(card, manualCard);
 }
 
 function discoveryRow(d) {
@@ -137,6 +140,12 @@ function manualForm(existing) {
   const card = el("div", { class: "card" }, `<h3>${isEdit ? "Edit connection" : "Manual connection"}</h3>`);
   const engine = el("input", { value: existing?.engine || "mysql", placeholder: "engine (sqlite|mysql|influxdb)" });
   const name = el("input", { value: existing?.connection_name || "", placeholder: "connection name" });
+  if (isEdit) {
+    name.disabled = true;
+    name.title = "Connection name cannot be changed — remove and re-add to rename";
+    engine.disabled = true;
+    engine.title = "Engine cannot be changed — remove and re-add to change engine";
+  }
   const host = el("input", { value: existing?.host || "core-mariadb", placeholder: "host" });
   const port = el("input", { value: existing?.port || "3306", placeholder: "port" });
   const user = el("input", { value: existing?.user || "", placeholder: "user" });
@@ -192,19 +201,32 @@ function manualForm(existing) {
   [engine, name, host, port, user, pass, database].forEach(
     (i) => ((i.style.margin = "4px"), (i.style.display = "block"))
   );
+  const actions = el("div", { style: "margin-top:8px" });
+  actions.append(submit, " ", test, " ", status);
+  if (isEdit) {
+    const cancel = el("button", { class: "action" }, "Cancel");
+    cancel.onclick = () => {
+      const cur = document.getElementById("manual-card");
+      if (cur) cur.replaceWith(manualForm());
+      cur?.scrollIntoView({ behavior: "smooth" });
+    };
+    actions.append(" ", cancel);
+  }
   const guide = el("button", { class: "action" }, "Read-only user guide");
   guide.onclick = async () => {
     const blk = await guidanceBlock(engine.value);
     card.append(blk);
   };
-  card.append(engine, name, host, port, user, pass, database, submit, " ", test, " ", status, guide);
+  card.append(engine, name, host, port, user, pass, database, actions, guide);
   return card;
 }
 
 function editConnection(d) {
+  const cur = document.getElementById("manual-card");
   const form = manualForm(d);
-  form.id = "edit-form";
-  view.append(form);
+  form.id = "manual-card";
+  if (cur) cur.replaceWith(form);
+  else view.append(form);
   form.scrollIntoView({ behavior: "smooth" });
 }
 

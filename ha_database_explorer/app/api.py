@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.4", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.5", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -143,6 +143,13 @@ async def list_databases():
                 "id": cached.get("id"),
                 "engine": c.get("engine"),
                 "connection_name": name,
+                # Expose connection fields so the Setup tab can pre-fill the edit form
+                # without a second round-trip (password is intentionally omitted).
+                "host": c.get("host"),
+                "port": c.get("port"),
+                "database": c.get("database"),
+                "user": c.get("user"),
+                "path": c.get("path"),
                 "status": cached.get("status"),
                 "total_size_mb": cached.get("total_size_mb"),
                 "last_scanned": cached.get("last_scanned"),
