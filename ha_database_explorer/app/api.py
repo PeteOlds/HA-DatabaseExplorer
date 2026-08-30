@@ -85,6 +85,8 @@ async def _bootstrap_discover(max_attempts: int = 90, interval: float = 2.0) -> 
                     add_connection(entry)
                 except Exception:
                     pass
+            # Populate the scan-results table so the UI shows the discovered DBs.
+            _spawn_scan(uuid.uuid4().hex)
             return
         await asyncio.sleep(interval)
 
