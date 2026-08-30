@@ -47,6 +47,29 @@ window.addEventListener("hashchange", router);
 
 async function renderDiscovery() {
   view.innerHTML = "";
+  const configured = await api("/api/databases").catch(() => []);
+  if (configured.length) {
+    const cfgCard = el("div", { class: "card" }, "<h3>Configured databases</h3>");
+    const cfgTable = el("table");
+    cfgTable.innerHTML =
+      "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Last scanned</th></tr></thead>";
+    const cfgBody = el("tbody");
+    configured.forEach((d) => {
+      const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
+      cfgBody.append(
+        el(
+          "tr",
+          {},
+          `<td>${d.connection_name}</td><td>${d.engine}</td>` +
+            `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
+            `<td>${scanned}</td>`
+        )
+      );
+    });
+    cfgTable.append(cfgBody);
+    cfgCard.append(cfgTable);
+    view.append(cfgCard);
+  }
   const card = el("div", { class: "card" }, "<h2>Discovery & Setup</h2>");
   const btn = el("button", { class: "action" }, "Discover databases");
   const list = el("div", {});
@@ -159,6 +182,28 @@ async function renderDashboard() {
     engineCard.append(bar);
   }
   view.append(engineCard);
+
+  const dbCard = el("div", { class: "card" }, "<h3>Databases</h3>");
+  const dbTable = el("table");
+  dbTable.innerHTML =
+    "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Size</th><th>Last scanned</th></tr></thead>";
+  const dbBody = el("tbody");
+  dbs.forEach((d) => {
+    const size = d.total_size_mb != null ? `${d.total_size_mb} MB` : "—";
+    const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
+    dbBody.append(
+      el(
+        "tr",
+        {},
+        `<td>${d.connection_name}</td><td>${d.engine}</td>` +
+          `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
+          `<td>${size}</td><td>${scanned}</td>`
+      )
+    );
+  });
+  dbTable.append(dbBody);
+  dbCard.append(dbTable);
+  view.append(dbCard);
 
   const scanCard = el("div", { class: "card" });
   const trigger = el("button", { class: "action" }, "Trigger Deep Scan");

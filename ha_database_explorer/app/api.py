@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.1", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.2", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -213,8 +213,10 @@ async def scan_ws(ws: WebSocket):
 
 @app.get("/api/metrics/global")
 async def metrics_global():
+    conns = load_connections()
     dbs = await get_databases()
-    domains = await get_domain_metrics()
+    db_ids = {d["id"] for d in dbs}
+    domains = [dm for dm in await get_domain_metrics() if dm["db_id"] in db_ids]
     overlap = await get_overlap()
     total_mb = sum(d["total_size_mb"] or 0 for d in dbs)
     total_records = sum(dm["total_records"] for dm in domains)
@@ -225,7 +227,7 @@ async def metrics_global():
         "total_size_mb": round(total_mb, 2),
         "total_records": total_records,
         "by_engine_mb": {k: round(v, 2) for k, v in by_engine.items()},
-        "database_count": len(dbs),
+        "database_count": len(conns),
         "overlap_entity_count": len(overlap),
     }
 

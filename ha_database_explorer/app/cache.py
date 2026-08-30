@@ -46,10 +46,17 @@ async def init_cache() -> None:
     async with aiosqlite.connect(CACHE_DB) as db:
         await db.executescript(SCHEMA)
         await db.commit()
+    # Heal any historical duplicate rows left by the old uuid4-based upsert.
+    await _dedupe_cache()
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _db_id(engine: str, connection_name: str) -> str:
+    """Deterministic id so repeated scans update the same row instead of appending."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{engine}:{connection_name}"))
 
 
 async def upsert_database(
@@ -58,16 +65,49 @@ async def upsert_database(
     total_size_mb: float | None,
     status: str,
 ) -> str:
-    db_id = str(uuid.uuid4())
+    db_id = _db_id(engine, connection_name)
     async with aiosqlite.connect(CACHE_DB) as db:
+        # Drop any stale rows for this (engine, name) so there is exactly one.
+        cur = await db.execute(
+            "SELECT id FROM databases WHERE engine = ? AND connection_name = ? AND id <> ?",
+            (engine, connection_name, db_id),
+        )
+        old_ids = [row[0] for row in await cur.fetchall()]
         await db.execute(
-            "INSERT OR REPLACE INTO databases "
+            "DELETE FROM databases WHERE engine = ? AND connection_name = ?",
+            (engine, connection_name),
+        )
+        await db.execute(
+            "INSERT INTO databases "
             "(id, engine, connection_name, total_size_mb, last_scanned, status) "
             "VALUES (?,?,?,?,?,?)",
             (db_id, engine, connection_name, total_size_mb, _now(), status),
         )
+        for oid in old_ids:
+            await db.execute("DELETE FROM domain_metrics WHERE db_id = ?", (oid,))
+            await db.execute("DELETE FROM entity_metrics WHERE db_id = ?", (oid,))
         await db.commit()
     return db_id
+
+
+async def _dedupe_cache() -> None:
+    """Keep only the latest row per (engine, connection_name) and purge orphaned metrics."""
+    async with aiosqlite.connect(CACHE_DB) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id, engine, connection_name, last_scanned FROM databases")
+        rows = await cur.fetchall()
+        keep: dict[tuple, dict] = {}
+        for r in rows:
+            key = (r["engine"], r["connection_name"])
+            if key not in keep or (r["last_scanned"] or "") >= (keep[key]["last_scanned"] or ""):
+                keep[key] = r
+        keep_ids = {r["id"] for r in keep.values()}
+        for r in rows:
+            if r["id"] not in keep_ids:
+                await db.execute("DELETE FROM databases WHERE id = ?", (r["id"],))
+                await db.execute("DELETE FROM domain_metrics WHERE db_id = ?", (r["id"],))
+                await db.execute("DELETE FROM entity_metrics WHERE db_id = ?", (r["id"],))
+        await db.commit()
 
 
 async def replace_domain_metrics(db_id: str, rows: list[dict]) -> None:
@@ -129,8 +169,18 @@ async def replace_overlap(rows: list[dict]) -> None:
 async def get_databases() -> list[dict]:
     async with aiosqlite.connect(CACHE_DB) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM databases ORDER BY connection_name")
-        return [dict(row) for row in await cur.fetchall()]
+        cur = await db.execute("SELECT * FROM databases")
+        rows = [dict(row) for row in await cur.fetchall()]
+    # Defensive de-dupe: keep the latest row per (engine, connection_name).
+    seen: dict[tuple, dict] = {}
+    out: list[dict] = []
+    for r in sorted(rows, key=lambda x: x.get("last_scanned") or "", reverse=True):
+        key = (r["engine"], r["connection_name"])
+        if key not in seen:
+            seen[key] = True
+            out.append(r)
+    out.sort(key=lambda x: x["connection_name"])
+    return out
 
 
 async def get_domain_metrics(db_id: str | None = None) -> list[dict]:

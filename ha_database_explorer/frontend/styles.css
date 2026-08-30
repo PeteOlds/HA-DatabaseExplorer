@@ -65,3 +65,7 @@ button.action {
 }
 .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--primary); width: 0; transition: width 0.3s; }
+.status { font-weight: 600; }
+.status.connected { color: #2e7d32; }
+.status.auth_failed, .status.error { color: #c62828; }
+.status.unknown, .status.scanning { color: var(--muted); }

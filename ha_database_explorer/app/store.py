@@ -8,6 +8,10 @@ from .config import CONFIG_FILE
 from .crypto import deserialize_config, serialize_config
 
 
+def _key(c: dict) -> tuple:
+    return (c.get("engine"), c.get("connection_name"))
+
+
 def load_connections() -> list[dict]:
     if not CONFIG_FILE.exists():
         return []
@@ -15,7 +19,16 @@ def load_connections() -> list[dict]:
         raw = json.loads(CONFIG_FILE.read_text())
     except Exception:
         return []
-    return [deserialize_config(r) for r in raw]
+    conns = [deserialize_config(r) for r in raw]
+    # De-duplicate by (engine, connection_name) so duplicates can't accumulate.
+    seen: dict[tuple, bool] = {}
+    out: list[dict] = []
+    for c in conns:
+        k = _key(c)
+        if k not in seen:
+            seen[k] = True
+            out.append(c)
+    return out
 
 
 def save_connections(connections: list[dict]) -> None:
@@ -25,6 +38,9 @@ def save_connections(connections: list[dict]) -> None:
 
 def add_connection(conn: dict) -> list[dict]:
     conns = load_connections()
+    k = _key(conn)
+    if any(_key(c) == k for c in conns):
+        return conns
     conns.append(conn)
     save_connections(conns)
     return conns
