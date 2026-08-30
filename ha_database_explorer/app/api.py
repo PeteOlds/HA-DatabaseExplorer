@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.3", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.4", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -205,13 +205,20 @@ async def scan_status(job_id: str):
 
 @app.get("/api/scan/last")
 async def scan_last():
+    from .cache import get_meta
+
+    raw = await get_meta("last_scan")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
     if not JOBS:
         return None
-    latest = max(
+    return max(
         JOBS.values(),
         key=lambda j: j.get("finished") or j.get("started") or "",
     )
-    return latest
 
 
 @app.websocket("/api/scan/ws")

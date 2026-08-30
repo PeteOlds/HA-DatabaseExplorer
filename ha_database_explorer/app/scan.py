@@ -12,6 +12,7 @@ from .cache import (
     replace_domain_metrics,
     replace_entity_metrics,
     replace_overlap,
+    set_meta,
     upsert_database,
 )
 from .config import MANUAL_SIZES
@@ -79,19 +80,35 @@ async def run_scan(job_id: str) -> None:
             await _broadcast(job_id)
 
         await _build_overlap()
+        duration_s = round(time.monotonic() - start_ts, 1)
+        finished = _now()
         JOBS[job_id].update(
             status="complete",
             percent=100,
             message="done",
-            finished=_now(),
-            duration_s=round(time.monotonic() - start_ts, 1),
+            finished=finished,
+            duration_s=duration_s,
+        )
+        await set_meta(
+            "last_scan",
+            json.dumps(
+                {"status": "complete", "duration_s": duration_s, "finished": finished, "message": "done"}
+            ),
         )
     except Exception as exc:
+        duration_s = round(time.monotonic() - start_ts, 1)
+        finished = _now()
         JOBS[job_id].update(
             status="failed",
             message=str(exc),
-            finished=_now(),
-            duration_s=round(time.monotonic() - start_ts, 1),
+            finished=finished,
+            duration_s=duration_s,
+        )
+        await set_meta(
+            "last_scan",
+            json.dumps(
+                {"status": "failed", "duration_s": duration_s, "finished": finished, "message": str(exc)}
+            ),
         )
     finally:
         await _broadcast(job_id)

@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS overlap_matrix (
     present_in TEXT NOT NULL,
     total_redundant_records INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -52,6 +56,22 @@ async def init_cache() -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def set_meta(key: str, value: str) -> None:
+    async with aiosqlite.connect(CACHE_DB) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def get_meta(key: str) -> str | None:
+    async with aiosqlite.connect(CACHE_DB) as db:
+        cur = await db.execute("SELECT value FROM meta WHERE key = ?", (key,))
+        row = await cur.fetchone()
+        return row[0] if row else None
 
 
 def _db_id(engine: str, connection_name: str) -> str:
