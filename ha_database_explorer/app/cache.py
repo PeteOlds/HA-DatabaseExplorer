@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS meta (
 async def init_cache() -> None:
     async with aiosqlite.connect(CACHE_DB) as db:
         await db.executescript(SCHEMA)
+        # Migration: add scan_duration_s column if missing (added in 0.1.6)
+        cur = await db.execute("PRAGMA table_info(databases)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "scan_duration_s" not in columns:
+            await db.execute("ALTER TABLE databases ADD COLUMN scan_duration_s REAL")
         await db.commit()
     # Heal any historical duplicate rows left by the old uuid4-based upsert.
     await _dedupe_cache()

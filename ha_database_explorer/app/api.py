@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.6", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.7", lifespan=lifespan)
 
 
 @app.get("/api/health")
