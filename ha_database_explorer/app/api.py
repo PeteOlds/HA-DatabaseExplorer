@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -32,15 +33,21 @@ async def lifespan(app: FastAPI):
     await init_cache()
     # Zero-config bootstrap: if no databases are configured yet, auto-discover and
     # persist whatever the environment exposes so the add-on works with no user input.
+    # Retry briefly because the add-on container's DNS may not be ready at first boot.
     if not load_connections():
-        try:
-            for entry in await discover_all():
-                add_connection(entry)
-        except Exception:
-            pass
+        for _ in range(5):
+            try:
+                found = await discover_all()
+            except Exception:
+                found = []
+            if found:
+                for entry in found:
+                    add_connection(entry)
+                break
+            await asyncio.sleep(3)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        lambda: __import__("asyncio").create_task(run_scan(uuid.uuid4().hex)),
+        lambda: _spawn_scan(uuid.uuid4().hex),
         CronTrigger.from_crontab(DEFAULT_SCAN_CRON),
         id="deep_scan",
         replace_existing=True,
@@ -56,6 +63,20 @@ app = FastAPI(title="HA Database Explorer", version="0.1.0", lifespan=lifespan)
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
+
+def _spawn_scan(job_id: str) -> None:
+    """Run a scan as a detached task, swallowing any exception so it never leaks
+    as an unretrieved Future warning."""
+
+    async def _run() -> None:
+        try:
+            await run_scan(job_id)
+        except Exception:
+            pass
+
+    task = asyncio.create_task(_run())
+    task.add_done_callback(lambda t: t.exception())
 
 
 class DBConfig(BaseModel):
@@ -107,9 +128,7 @@ async def test_connection(cfg: DBConfig):
 @app.post("/api/scan/trigger")
 async def trigger_scan():
     job_id = str(uuid.uuid4())
-    import asyncio
-
-    asyncio.create_task(run_scan(job_id))
+    _spawn_scan(job_id)
     return {"job_id": job_id}
 
 
