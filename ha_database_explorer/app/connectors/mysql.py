@@ -62,7 +62,7 @@ class MySQLConnector(BaseConnector):
                         (self.db,),
                     )
                     (size,) = await cur.fetchone()
-            self._total_size = (size or 0) / 1_000_000
+            self._total_size = float((size or 0) / 1_000_000)
             return self._total_size
         except Exception:
             return None
