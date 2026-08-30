@@ -74,9 +74,8 @@ class MySQLConnector(BaseConnector):
         pool = await aiomysql.create_pool(**self._pool_args())
         try:
             async with pool.acquire() as conn:
-                await conn.begin()
-                await conn.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
                 async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
                     await cur.execute(
                         """
                         SELECT sm.entity_id AS entity_id,
