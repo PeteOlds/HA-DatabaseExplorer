@@ -57,38 +57,26 @@ async def run_scan(job_id: str) -> None:
             await _broadcast(job_id)
             db_start_ts = time.monotonic()
             try:
-                import logging
-                logging.info(f"Scan connection {name}: engine={conn.get('engine')}, host={conn.get('host')}, user={conn.get('user')}, database={conn.get('database')}")
                 connector = build_connector(conn["engine"], name, conn)
-                logging.info(f"Testing connection for {name}")
                 ok = await connector.test_connection()
-                logging.info(f"Test connection result for {name}: {ok}")
                 if not ok:
                     db_duration_s = round(time.monotonic() - db_start_ts, 1)
                     await upsert_database(conn["engine"], name, None, "auth_failed", db_duration_s)
                     continue
-                logging.info(f"Getting total_size_mb for {name}")
                 size = conn.get("manual_size_mb")
                 if size is None:
                     size = await connector.total_size_mb()
-                logging.info(f"total_size_mb for {name}: {size}")
                 if size is None:
                     size = MANUAL_SIZES.get(name)
-                logging.info(f"Getting entity_metrics for {name}")
                 entities = await connector.entity_metrics()
-                logging.info(f"entity_metrics for {name}: {len(entities)} entities")
                 domains = await connector.domain_metrics(entities)
-                logging.info(f"domain_metrics for {name}: {len(domains)} domains")
                 db_duration_s = round(time.monotonic() - db_start_ts, 1)
                 db_id = await upsert_database(conn["engine"], name, size, "connected", db_duration_s)
                 await replace_entity_metrics(db_id, [e.__dict__ for e in entities])
                 await replace_domain_metrics(
                     db_id, [d.__dict__ for d in domains]
                 )
-                logging.info(f"Successfully scanned {name}")
-            except Exception as exc:
-                import logging
-                logging.error(f"Error scanning {name}: {exc}", exc_info=True)
+            except Exception as exc:  # one bad DB must not abort the whole scan
                 db_duration_s = round(time.monotonic() - db_start_ts, 1)
                 await upsert_database(conn.get("engine", "unknown"), name, None, "error", db_duration_s)
                 JOBS[job_id]["message"] = f"{name}: {exc}"

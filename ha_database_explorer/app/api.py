@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.10", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -163,9 +163,7 @@ async def list_databases():
 
 @app.post("/api/databases")
 async def save_database(cfg: DBConfig):
-    import logging
     conn = cfg.model_dump(exclude_none=True)
-    logging.info(f"Save connection for {cfg.connection_name}: engine={cfg.engine}, host={cfg.host}, port={cfg.port}, user={cfg.user}, database={cfg.database}, password={'*' * len(cfg.password) if cfg.password else 'None'}")
     add_connection(conn)
     # Test the connection and update status immediately
     test_result = None
@@ -174,10 +172,9 @@ async def save_database(cfg: DBConfig):
         test_result = await connector.test_connection()
         status = "connected" if test_result else "auth_failed"
         await upsert_database(cfg.engine, cfg.connection_name, None, status)
-    except Exception as exc:
-        logging.error(f"Connection test failed for {cfg.connection_name}: {exc}")
+    except Exception:
         await upsert_database(cfg.engine, cfg.connection_name, None, "error")
-    return {"saved": True, "config": safe_config_dump(conn), "test_result": test_result}
+    return {"saved": True, "config": safe_config_dump(conn)}
 
 
 @app.delete("/api/databases/{name}")
@@ -191,17 +188,14 @@ async def update_database(name: str, cfg: DBConfig):
     conn = cfg.model_dump(exclude_none=True)
     update_connection(name, conn)
     # Test the updated connection and update status immediately
-    test_result = None
     try:
         connector = build_connector(cfg.engine, name, conn)
-        test_result = await connector.test_connection()
-        status = "connected" if test_result else "auth_failed"
+        ok = await connector.test_connection()
+        status = "connected" if ok else "auth_failed"
         await upsert_database(cfg.engine, name, None, status)
-    except Exception as exc:
-        import logging
-        logging.error(f"Connection test failed for {name}: {exc}")
+    except Exception:
         await upsert_database(cfg.engine, name, None, "error")
-    return {"updated": True, "config": safe_config_dump(conn), "test_result": test_result}
+    return {"updated": True, "config": safe_config_dump(conn)}
 
 
 @app.post("/api/databases/discover")
@@ -211,14 +205,11 @@ async def discover():
 
 @app.post("/api/databases/test-connection")
 async def test_connection(cfg: DBConfig):
-    import logging
     try:
         cfg_dict = cfg.model_dump(exclude_none=True)
-        logging.info(f"Test connection for {cfg.connection_name}: engine={cfg.engine}, host={cfg.host}, port={cfg.port}, user={cfg.user}, database={cfg.database}, password={'*' * len(cfg.password) if cfg.password else 'None'}")
         connector = build_connector(cfg.engine, cfg.connection_name, cfg_dict)
         ok = await connector.test_connection()
     except Exception as exc:
-        logging.error(f"Test connection exception: {exc}")
         return {"connected": False, "error": str(exc)}
     return {"connected": ok}
 

@@ -30,19 +30,16 @@ class MySQLConnector(BaseConnector):
         }
 
     async def test_connection(self) -> bool:
-        import logging
         try:
             pool = await aiomysql.create_pool(**self._pool_args())
-        except Exception as exc:
-            logging.error(f"MySQL connection failed: {exc}")
+        except Exception:
             return False
         try:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute("SELECT 1 FROM states_meta LIMIT 1")
             return True
-        except Exception as exc:
-            logging.error(f"MySQL query failed: {exc}")
+        except Exception:
             return False
         finally:
             pool.close()
