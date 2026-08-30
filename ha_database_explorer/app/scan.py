@@ -57,6 +57,8 @@ async def run_scan(job_id: str) -> None:
             await _broadcast(job_id)
             db_start_ts = time.monotonic()
             try:
+                import logging
+                logging.info(f"Scan connection {name}: engine={conn.get('engine')}, host={conn.get('host')}, user={conn.get('user')}, database={conn.get('database')}")
                 connector = build_connector(conn["engine"], name, conn)
                 ok = await connector.test_connection()
                 if not ok:
