@@ -1,15 +1,13 @@
-import "https://esm.run/@material/web/button/filled-button.js";
-import "https://esm.run/@material/web/textfield/filled-text-field.js";
-import "https://esm.run/@material/web/select/filled-select.js";
-import "https://esm.run/@material/web/select/select-option.js";
-import "https://esm.run/@material/web/progress/circular-progress.js";
+// Resolve the API base from the current page path so the app works whether it is
+// opened directly or behind a Home Assistant ingress prefix (e.g. /api/hassio_ingress/TOKEN/).
+const BASE = location.pathname.replace(/\/[^/]*$/, "") + "/";
 
-const API = "";
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
 
 async function api(path, opts) {
-  const res = await fetch(API + path, opts);
+  const url = BASE + String(path).replace(/^\//, "");
+  const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json();
 }
@@ -183,7 +181,8 @@ function metricCard(label, value) {
 }
 
 async function poll(job_id, fill, status) {
-  const ws = new WebSocket(`ws://${location.host}/api/scan/ws`);
+  const wsProto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${wsProto}://${location.host}${BASE}api/scan/ws`);
   let last = 0;
   const tick = setInterval(async () => {
     try {

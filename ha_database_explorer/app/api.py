@@ -28,8 +28,21 @@ from .scan import JOBS, run_scan, subscribe, unsubscribe
 from .store import add_connection, load_connections, remove_connection
 
 
+def _suppress_dns_noise(loop, context) -> None:
+    """Swallow benign DNS-resolution noise (e.g. probing hassio preset hosts that
+    are not present, or httpx/anyio DNS races) so the supervisor log stays clean.
+    Any other unexpected exception still goes to the default handler."""
+    import socket
+
+    exc = context.get("exception")
+    if isinstance(exc, socket.gaierror):
+        return
+    loop.default_exception_handler(context)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.get_event_loop().set_exception_handler(_suppress_dns_noise)
     await init_cache()
     # Zero-config bootstrap: if no databases are configured yet, auto-discover and
     # persist whatever the environment exposes so the add-on works with no user input.
