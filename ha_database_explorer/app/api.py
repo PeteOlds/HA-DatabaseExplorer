@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     # persist whatever the environment exposes so the add-on works with no user input.
     # Retry briefly because the add-on container's DNS may not be ready at first boot.
     if not load_connections():
-        for _ in range(5):
+        for _ in range(15):
             try:
                 found = await discover_all()
             except Exception:
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
                 for entry in found:
                     add_connection(entry)
                 break
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         lambda: _spawn_scan(uuid.uuid4().hex),
