@@ -25,7 +25,7 @@ from .connectors import build_connector
 from .crypto import safe_config_dump
 from .discovery import discover_all
 from .scan import JOBS, run_scan, subscribe, unsubscribe
-from .store import add_connection, load_connections, remove_connection
+from .store import add_connection, load_connections, remove_connection, update_connection
 
 
 def _suppress_dns_noise(loop, context) -> None:
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.2", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.3", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -165,6 +165,13 @@ async def delete_database(name: str):
     return {"deleted": name}
 
 
+@app.put("/api/databases/{name}")
+async def update_database(name: str, cfg: DBConfig):
+    conn = cfg.model_dump(exclude_none=True)
+    update_connection(name, conn)
+    return {"updated": True, "config": safe_config_dump(conn)}
+
+
 @app.post("/api/databases/discover")
 async def discover():
     return await discover_all()
@@ -194,6 +201,17 @@ async def scan_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="unknown job")
     return job
+
+
+@app.get("/api/scan/last")
+async def scan_last():
+    if not JOBS:
+        return None
+    latest = max(
+        JOBS.values(),
+        key=lambda j: j.get("finished") or j.get("started") or "",
+    )
+    return latest
 
 
 @app.websocket("/api/scan/ws")

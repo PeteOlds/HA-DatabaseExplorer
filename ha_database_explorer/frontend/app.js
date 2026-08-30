@@ -56,15 +56,25 @@ async function renderDiscovery() {
     const cfgBody = el("tbody");
     configured.forEach((d) => {
       const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
-      cfgBody.append(
-        el(
-          "tr",
-          {},
-          `<td>${d.connection_name}</td><td>${d.engine}</td>` +
-            `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
-            `<td>${scanned}</td>`
-        )
+      const tr = el(
+        "tr",
+        {},
+        `<td>${d.connection_name}</td><td>${d.engine}</td>` +
+          `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
+          `<td>${scanned}</td>`
       );
+      const actions = el("td");
+      const edit = el("button", { class: "action" }, "Edit");
+      edit.onclick = () => editConnection(d);
+      const del = el("button", { class: "action" }, "Remove");
+      del.onclick = async () => {
+        if (!confirm(`Remove ${d.connection_name}?`)) return;
+        await api(`/api/databases/${encodeURIComponent(d.connection_name)}`, { method: "DELETE" });
+        router();
+      };
+      actions.append(edit, " ", del);
+      tr.append(actions);
+      cfgBody.append(tr);
     });
     cfgTable.append(cfgBody);
     cfgCard.append(cfgTable);
@@ -122,46 +132,88 @@ function discoveryRow(d) {
   return row;
 }
 
-function manualForm() {
-  const card = el("div", { class: "card" }, "<h3>Manual connection</h3>");
-  const engine = el("input", { value: "mysql", placeholder: "engine (sqlite|mysql|influxdb)" });
-  const name = el("input", { value: "", placeholder: "connection name" });
-  const host = el("input", { value: "core-mariadb", placeholder: "host" });
-  const port = el("input", { value: "3306", placeholder: "port" });
-  const user = el("input", { value: "", placeholder: "user" });
-  const pass = el("input", { type: "password", value: "", placeholder: "password" });
-  const submit = el("button", { class: "action" }, "Add");
-  submit.onclick = async () => {
-    const cfg = {
-      engine: engine.value,
-      connection_name: name.value || `${host.value}`,
-      host: host.value,
-      port: parseInt(port.value) || undefined,
-      user: user.value,
-      password: pass.value,
-    };
-    await api("/api/databases", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cfg),
-    });
-    alert("Saved");
+function manualForm(existing) {
+  const isEdit = !!existing;
+  const card = el("div", { class: "card" }, `<h3>${isEdit ? "Edit connection" : "Manual connection"}</h3>`);
+  const engine = el("input", { value: existing?.engine || "mysql", placeholder: "engine (sqlite|mysql|influxdb)" });
+  const name = el("input", { value: existing?.connection_name || "", placeholder: "connection name" });
+  const host = el("input", { value: existing?.host || "core-mariadb", placeholder: "host" });
+  const port = el("input", { value: existing?.port || "3306", placeholder: "port" });
+  const user = el("input", { value: existing?.user || "", placeholder: "user" });
+  const pass = el("input", { type: "password", value: "", placeholder: "password (blank = keep existing)" });
+  const database = el("input", { value: existing?.database || "", placeholder: "database (optional)" });
+  const status = el("span", { class: "muted" });
+  const cfgFromInputs = () => ({
+    engine: engine.value,
+    connection_name: name.value || host.value,
+    host: host.value,
+    port: parseInt(port.value) || undefined,
+    user: user.value,
+    password: pass.value || undefined,
+    database: database.value || undefined,
+  });
+  const test = el("button", { class: "action" }, "Test");
+  test.onclick = async () => {
+    status.textContent = "testing…";
+    try {
+      const r = await api("/api/databases/test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfgFromInputs()),
+      });
+      status.textContent = r.connected ? " connected ✓" : " failed ✗ " + (r.error || "");
+    } catch (e) {
+      status.textContent = e.message;
+    }
   };
-  [engine, name, host, port, user, pass].forEach((i) => (i.style.margin = "4px", (i.style.display = "block")));
+  const submit = el("button", { class: "action" }, isEdit ? "Save" : "Add");
+  submit.onclick = async () => {
+    const cfg = cfgFromInputs();
+    try {
+      if (isEdit) {
+        await api(`/api/databases/${encodeURIComponent(existing.connection_name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        });
+      } else {
+        await api("/api/databases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        });
+      }
+      alert(isEdit ? "Saved" : "Added");
+      router();
+    } catch (e) {
+      status.textContent = e.message;
+    }
+  };
+  [engine, name, host, port, user, pass, database].forEach(
+    (i) => ((i.style.margin = "4px"), (i.style.display = "block"))
+  );
   const guide = el("button", { class: "action" }, "Read-only user guide");
   guide.onclick = async () => {
     const blk = await guidanceBlock(engine.value);
     card.append(blk);
   };
-  card.append(engine, name, host, port, user, pass, submit, guide);
+  card.append(engine, name, host, port, user, pass, database, submit, " ", test, " ", status, guide);
   return card;
+}
+
+function editConnection(d) {
+  const form = manualForm(d);
+  form.id = "edit-form";
+  view.append(form);
+  form.scrollIntoView({ behavior: "smooth" });
 }
 
 async function renderDashboard() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
-  const [global, dbs] = await Promise.all([
+  const [global, dbs, last] = await Promise.all([
     api("/api/metrics/global"),
     api("/api/databases"),
+    api("/api/scan/last").catch(() => null),
   ]);
   view.innerHTML = "";
   const grid = el("div", { class: "grid" });
@@ -216,6 +268,11 @@ async function renderDashboard() {
     poll(job_id, fill, status);
   };
   scanCard.append(el("p", {}, `Last scanned sources: ${dbs.length}`), trigger, prog, status);
+  if (last) {
+    const dur = last.duration_s != null ? ` in ${last.duration_s}s` : "";
+    const when = last.finished ? new Date(last.finished).toLocaleString() : "";
+    scanCard.append(el("p", { class: "muted" }, `Last scan: ${last.status}${dur} (${when})`));
+  }
   view.append(scanCard);
 }
 
@@ -233,7 +290,7 @@ async function poll(job_id, fill, status) {
     try {
       const j = await api(`/api/scan/status/${job_id}`);
       fill.style.width = j.percent + "%";
-      status.textContent = `${j.status} — ${j.message} (${j.percent}%)`;
+      status.textContent = `${j.status} — ${j.message} (${j.percent}%)${j.duration_s != null ? " in " + j.duration_s + "s" : ""}`;
       if (j.status === "complete" || j.status === "failed") {
         clearInterval(tick);
         ws.close();

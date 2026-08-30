@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 
 from .cache import (
@@ -43,6 +44,7 @@ def _now() -> str:
 
 
 async def run_scan(job_id: str) -> None:
+    start_ts = time.monotonic()
     JOBS[job_id] = {"status": "running", "percent": 0, "message": "starting", "started": _now()}
     await _broadcast(job_id)
     connections = load_connections()
@@ -77,9 +79,20 @@ async def run_scan(job_id: str) -> None:
             await _broadcast(job_id)
 
         await _build_overlap()
-        JOBS[job_id].update(status="complete", percent=100, message="done", finished=_now())
+        JOBS[job_id].update(
+            status="complete",
+            percent=100,
+            message="done",
+            finished=_now(),
+            duration_s=round(time.monotonic() - start_ts, 1),
+        )
     except Exception as exc:
-        JOBS[job_id].update(status="failed", message=str(exc))
+        JOBS[job_id].update(
+            status="failed",
+            message=str(exc),
+            finished=_now(),
+            duration_s=round(time.monotonic() - start_ts, 1),
+        )
     finally:
         await _broadcast(job_id)
 
