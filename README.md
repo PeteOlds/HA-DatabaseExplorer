@@ -23,14 +23,15 @@ local-only, zero telemetry.
 
 1. Add the repo to HA → Settings → Add-ons → Add-on Store → ⋮ → Repositories:
    `https://github.com/PeteOlds/HA-DatabaseExplorer`.
-2. Install **HA Database Explorer**. The add-on sets `protection_mode: false` (privileged)
-   so it can mount `/var/run/docker.sock` for container discovery and InfluxDB disk sizing.
-3. Start the add-on and open it via the **Database Explorer** sidebar panel (Ingress).
+ 2. Install **HA Database Explorer**. The add-on runs with `privileged: [NET_ADMIN]` so it can
+    probe the host network for databases. Discovery uses the Supervisor preset hostnames
+    (`core_mariadb`, `a0d7b954-influxdb`, …) and `homeassistant_config` for the recorder DB.
+ 3. Start the add-on and open it via the **Database Explorer** sidebar panel (Ingress).
 
 ### Standalone Docker
 
 ```bash
-docker build -t ha-db-explorer .
+docker build -t ha-db-explorer -f ha_database_explorer/Dockerfile ha_database_explorer
 docker run -d --name ha-db-explorer \
   -p 8099:8099 \
   -v ha_db_explorer_data:/data \
@@ -65,8 +66,11 @@ socket access), set a manual size in the add-on options (`manual_sizes`) or leav
 
 ## Development
 
+The add-on source lives under `ha_database_explorer/`.
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
+cd ha_database_explorer
 pip install -e ".[dev]"
 ruff check app tests
 pytest

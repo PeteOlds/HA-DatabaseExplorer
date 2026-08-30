@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY frontend ./frontend
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
