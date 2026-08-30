@@ -55,11 +55,13 @@ async def run_scan(job_id: str) -> None:
             name = conn.get("connection_name", conn.get("engine"))
             JOBS[job_id]["message"] = f"scanning {name}"
             await _broadcast(job_id)
+            db_start_ts = time.monotonic()
             try:
                 connector = build_connector(conn["engine"], name, conn)
                 ok = await connector.test_connection()
                 if not ok:
-                    await upsert_database(conn["engine"], name, None, "auth_failed")
+                    db_duration_s = round(time.monotonic() - db_start_ts, 1)
+                    await upsert_database(conn["engine"], name, None, "auth_failed", db_duration_s)
                     continue
                 size = conn.get("manual_size_mb")
                 if size is None:
@@ -68,13 +70,15 @@ async def run_scan(job_id: str) -> None:
                     size = MANUAL_SIZES.get(name)
                 entities = await connector.entity_metrics()
                 domains = await connector.domain_metrics(entities)
-                db_id = await upsert_database(conn["engine"], name, size, "connected")
+                db_duration_s = round(time.monotonic() - db_start_ts, 1)
+                db_id = await upsert_database(conn["engine"], name, size, "connected", db_duration_s)
                 await replace_entity_metrics(db_id, [e.__dict__ for e in entities])
                 await replace_domain_metrics(
                     db_id, [d.__dict__ for d in domains]
                 )
             except Exception as exc:  # one bad DB must not abort the whole scan
-                await upsert_database(conn.get("engine", "unknown"), name, None, "error")
+                db_duration_s = round(time.monotonic() - db_start_ts, 1)
+                await upsert_database(conn.get("engine", "unknown"), name, None, "error", db_duration_s)
                 JOBS[job_id]["message"] = f"{name}: {exc}"
             JOBS[job_id]["percent"] = int(100 * i / total)
             await _broadcast(job_id)

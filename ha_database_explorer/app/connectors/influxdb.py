@@ -55,7 +55,8 @@ class InfluxDBConnector(BaseConnector):
 
     async def entity_metrics(self) -> list[EntityMetric]:
         try:
-            inventory = await self._query('SHOW TAG VALUES FROM /.*/ WITH KEY = "entity_id"')
+            # Get all unique entity_ids from the database
+            inventory = await self._query('SHOW TAG VALUES WITH KEY = "entity_id"')
         except Exception:
             return []
         entity_ids = [row[-1] for row in inventory if row]
@@ -65,8 +66,15 @@ class InfluxDBConnector(BaseConnector):
         async def _one(entity_id: str) -> EntityMetric | None:
             async with sem:
                 try:
-                    cnt = await self._query(f'SELECT count(value) FROM "{entity_id}"')
-                    fst = await self._query(f'SELECT first(value) FROM "{entity_id}"')
+                    # Query all measurements filtered by entity_id tag
+                    # Use regex to match entity_id in tag value
+                    escaped_id = entity_id.replace("\\", "\\\\").replace("'", "\\'")
+                    cnt = await self._query(
+                        f'SELECT count(value) FROM /.*/ WHERE "entity_id" = \'{escaped_id}\''
+                    )
+                    fst = await self._query(
+                        f'SELECT first(value) FROM /.*/ WHERE "entity_id" = \'{escaped_id}\''
+                    )
                 except Exception:
                     return None
             record_count = int(cnt[0][1]) if cnt and len(cnt[0]) > 1 else 0

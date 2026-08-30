@@ -52,17 +52,18 @@ async function renderDiscovery() {
     const cfgCard = el("div", { class: "card" }, "<h3>Configured databases</h3>");
     const cfgTable = el("table");
     cfgTable.innerHTML =
-      "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th></th></tr></thead>";
+      "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th>Duration</th><th></th></tr></thead>";
     const cfgBody = el("tbody");
     configured.forEach((d) => {
       const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
+      const duration = d.scan_duration_s != null ? `${d.scan_duration_s}s` : "—";
       const hostLabel = d.host ? `${d.host}${d.port ? ":" + d.port : ""}` : d.path || "—";
       const tr = el(
         "tr",
         {},
         `<td>${d.connection_name}</td><td>${d.engine}</td><td>${hostLabel}</td>` +
           `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
-          `<td>${scanned}</td>`
+          `<td>${scanned}</td><td>${duration}</td>`
       );
       const actions = el("td");
       const edit = el("button", { class: "action" }, "Edit");
@@ -260,18 +261,19 @@ async function renderDashboard() {
   const dbCard = el("div", { class: "card" }, "<h3>Databases</h3>");
   const dbTable = el("table");
   dbTable.innerHTML =
-    "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Size</th><th>Last scanned</th></tr></thead>";
+    "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Size</th><th>Last scanned</th><th>Duration</th></tr></thead>";
   const dbBody = el("tbody");
   dbs.forEach((d) => {
     const size = d.total_size_mb != null ? `${d.total_size_mb} MB` : "—";
     const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
+    const duration = d.scan_duration_s != null ? `${d.scan_duration_s}s` : "—";
     dbBody.append(
       el(
         "tr",
         {},
         `<td>${d.connection_name}</td><td>${d.engine}</td>` +
           `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
-          `<td>${size}</td><td>${scanned}</td>`
+          `<td>${size}</td><td>${scanned}</td><td>${duration}</td>`
       )
     );
   });

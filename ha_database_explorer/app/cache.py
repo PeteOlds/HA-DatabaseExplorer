@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS databases (
     connection_name TEXT NOT NULL,
     total_size_mb REAL,
     last_scanned TEXT,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    scan_duration_s REAL
 );
 CREATE TABLE IF NOT EXISTS domain_metrics (
     id TEXT PRIMARY KEY,
@@ -84,6 +85,7 @@ async def upsert_database(
     connection_name: str,
     total_size_mb: float | None,
     status: str,
+    scan_duration_s: float | None = None,
 ) -> str:
     db_id = _db_id(engine, connection_name)
     async with aiosqlite.connect(CACHE_DB) as db:
@@ -99,9 +101,9 @@ async def upsert_database(
         )
         await db.execute(
             "INSERT INTO databases "
-            "(id, engine, connection_name, total_size_mb, last_scanned, status) "
-            "VALUES (?,?,?,?,?,?)",
-            (db_id, engine, connection_name, total_size_mb, _now(), status),
+            "(id, engine, connection_name, total_size_mb, last_scanned, status, scan_duration_s) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (db_id, engine, connection_name, total_size_mb, _now(), status, scan_duration_s),
         )
         for oid in old_ids:
             await db.execute("DELETE FROM domain_metrics WHERE db_id = ?", (oid,))

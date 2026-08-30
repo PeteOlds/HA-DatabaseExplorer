@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.5", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.6", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -153,6 +153,7 @@ async def list_databases():
                 "status": cached.get("status"),
                 "total_size_mb": cached.get("total_size_mb"),
                 "last_scanned": cached.get("last_scanned"),
+                "scan_duration_s": cached.get("scan_duration_s"),
                 "detected": c.get("detected"),
             }
         )
@@ -176,6 +177,14 @@ async def delete_database(name: str):
 async def update_database(name: str, cfg: DBConfig):
     conn = cfg.model_dump(exclude_none=True)
     update_connection(name, conn)
+    # Test the updated connection and update status immediately
+    try:
+        connector = build_connector(cfg.engine, name, conn)
+        ok = await connector.test_connection()
+        status = "connected" if ok else "auth_failed"
+        await upsert_database(cfg.engine, name, None, status)
+    except Exception:
+        await upsert_database(cfg.engine, name, None, "error")
     return {"updated": True, "config": safe_config_dump(conn)}
 
 

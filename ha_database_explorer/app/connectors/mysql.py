@@ -77,7 +77,7 @@ class MySQLConnector(BaseConnector):
                     await cur.execute(
                         """
                         SELECT sm.entity_id AS entity_id,
-                               COUNT(s.rowid) AS record_count,
+                               COUNT(*) AS record_count,
                                MIN(s.last_updated) AS start_date
                         FROM states s
                         JOIN states_meta sm ON sm.metadata_id = s.metadata_id
