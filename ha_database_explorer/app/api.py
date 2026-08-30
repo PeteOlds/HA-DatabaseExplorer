@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="HA Database Explorer", version="0.1.9", lifespan=lifespan)
+app = FastAPI(title="HA Database Explorer", version="0.1.10", lifespan=lifespan)
 
 
 @app.get("/api/health")
@@ -166,14 +166,17 @@ async def save_database(cfg: DBConfig):
     conn = cfg.model_dump(exclude_none=True)
     add_connection(conn)
     # Test the connection and update status immediately
+    test_result = None
     try:
         connector = build_connector(cfg.engine, cfg.connection_name, conn)
-        ok = await connector.test_connection()
-        status = "connected" if ok else "auth_failed"
+        test_result = await connector.test_connection()
+        status = "connected" if test_result else "auth_failed"
         await upsert_database(cfg.engine, cfg.connection_name, None, status)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.error(f"Connection test failed for {cfg.connection_name}: {exc}")
         await upsert_database(cfg.engine, cfg.connection_name, None, "error")
-    return {"saved": True, "config": safe_config_dump(conn)}
+    return {"saved": True, "config": safe_config_dump(conn), "test_result": test_result}
 
 
 @app.delete("/api/databases/{name}")
@@ -187,14 +190,17 @@ async def update_database(name: str, cfg: DBConfig):
     conn = cfg.model_dump(exclude_none=True)
     update_connection(name, conn)
     # Test the updated connection and update status immediately
+    test_result = None
     try:
         connector = build_connector(cfg.engine, name, conn)
-        ok = await connector.test_connection()
-        status = "connected" if ok else "auth_failed"
+        test_result = await connector.test_connection()
+        status = "connected" if test_result else "auth_failed"
         await upsert_database(cfg.engine, name, None, status)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.error(f"Connection test failed for {name}: {exc}")
         await upsert_database(cfg.engine, name, None, "error")
-    return {"updated": True, "config": safe_config_dump(conn)}
+    return {"updated": True, "config": safe_config_dump(conn), "test_result": test_result}
 
 
 @app.post("/api/databases/discover")
