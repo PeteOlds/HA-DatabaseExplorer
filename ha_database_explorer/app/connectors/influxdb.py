@@ -37,30 +37,24 @@ class InfluxDBConnector(BaseConnector):
             return False
 
     async def total_size_mb(self) -> float | None:
-        """Query InfluxDB internal stats to calculate disk size for this database."""
+        """Query InfluxDB debug endpoint to calculate disk size for this database."""
         try:
-            # Query the _internal database for shard disk usage
-            # The shard measurement in _internal tracks diskBytes per shard
+            # Query the /debug/vars endpoint which exposes shard-level stats
             async with httpx.AsyncClient(timeout=30.0) as c:
-                params = {
-                    "db": "_internal",
-                    "q": f'SELECT sum("diskBytes") FROM _internal."autogen"."shard" WHERE "database" = \'{self.database}\' AND time > now() - 1m'
-                }
-                r = await c.get(f"{self.base}/query", params=params, **self._auth())
+                r = await c.get(f"{self.base}/debug/vars", **self._auth())
                 r.raise_for_status()
                 data = r.json()
                 
-            # Parse the result
-            for res in data.get("results", []):
-                for ser in res.get("series", []):
-                    for row in ser.get("values", []):
-                        # row format: [time, sum_value]
-                        if len(row) >= 2 and row[1] is not None:
-                            total_bytes = int(row[1])
-                            return total_bytes / (1024 * 1024)  # Convert to MB
-            return None
+            # Sum diskBytes across all shards for this database
+            total_bytes = 0
+            for key, value in data.items():
+                if key.startswith("shard:") and self.database in key:
+                    disk_bytes = value.get("values", {}).get("diskBytes", 0)
+                    total_bytes += disk_bytes
+            
+            return total_bytes / (1024 * 1024) if total_bytes > 0 else None
         except Exception:
-            # _internal database might not be accessible or query failed
+            # /debug/vars might not be accessible or query failed
             return None
 
     async def _query(self, q: str) -> list:
