@@ -37,8 +37,31 @@ class InfluxDBConnector(BaseConnector):
             return False
 
     async def total_size_mb(self) -> float | None:
-        # No HTTP endpoint for data-dir bytes; resolved via Docker socket in discovery/scan.
-        return None
+        """Query InfluxDB internal stats to calculate disk size for this database."""
+        try:
+            # Query the _internal database for shard disk usage
+            # The shard measurement in _internal tracks diskBytes per shard
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                params = {
+                    "db": "_internal",
+                    "q": f'SELECT sum("diskBytes") FROM _internal."autogen"."shard" WHERE "database" = \'{self.database}\' AND time > now() - 1m'
+                }
+                r = await c.get(f"{self.base}/query", params=params, **self._auth())
+                r.raise_for_status()
+                data = r.json()
+                
+            # Parse the result
+            for res in data.get("results", []):
+                for ser in res.get("series", []):
+                    for row in ser.get("values", []):
+                        # row format: [time, sum_value]
+                        if len(row) >= 2 and row[1] is not None:
+                            total_bytes = int(row[1])
+                            return total_bytes / (1024 * 1024)  # Convert to MB
+            return None
+        except Exception:
+            # _internal database might not be accessible or query failed
+            return None
 
     async def _query(self, q: str) -> list:
         params = {"db": self.database, "q": q}

@@ -249,9 +249,14 @@ async function renderDashboard() {
   view.append(grid);
 
   const engineCard = el("div", { class: "card" }, "<h3>Storage by engine</h3>");
+  // Calculate total known size (exclude engines with null or 0 MB)
+  const totalKnown = Object.values(global.by_engine_mb || {})
+    .filter(mb => mb != null && mb > 0)
+    .reduce((sum, mb) => sum + mb, 0);
   for (const [eng, mb] of Object.entries(global.by_engine_mb || {})) {
-    const pct = global.total_size_mb ? (mb / global.total_size_mb) * 100 : 0;
-    engineCard.append(el("p", {}, `${eng}: ${mb} MB (${pct.toFixed(1)}%)`));
+    const sizeText = mb ? `${mb} MB` : "Unknown";
+    const pct = totalKnown && mb ? (mb / totalKnown) * 100 : 0;
+    engineCard.append(el("p", {}, `${eng}: ${sizeText} (${pct.toFixed(1)}%)`));
     const bar = el("div", { class: "bar" });
     bar.append(el("i", { style: `width:${pct}%` }));
     engineCard.append(bar);
@@ -264,7 +269,7 @@ async function renderDashboard() {
     "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Size</th><th>Last scanned</th><th>Duration</th></tr></thead>";
   const dbBody = el("tbody");
   dbs.forEach((d) => {
-    const size = d.total_size_mb != null ? `${d.total_size_mb} MB` : "—";
+    const size = d.total_size_mb != null ? `${d.total_size_mb} MB` : "Unknown";
     const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
     const duration = d.scan_duration_s != null ? `${d.scan_duration_s}s` : "—";
     dbBody.append(
