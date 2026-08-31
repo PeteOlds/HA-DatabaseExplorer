@@ -228,7 +228,7 @@ async def get_entity_metrics(
 ) -> list[dict]:
     async with aiosqlite.connect(CACHE_DB) as db:
         db.row_factory = aiosqlite.Row
-        sql = "SELECT * FROM entity_metrics WHERE 1=1"
+        sql = "SELECT *, updates_per_hour * 24.0 AS updates_per_day FROM entity_metrics WHERE 1=1"
         params: list = []
         if domain:
             sql += " AND domain = ?"
@@ -236,7 +236,7 @@ async def get_entity_metrics(
         if db_id:
             sql += " AND db_id = ?"
             params.append(db_id)
-        if sort in {"record_count", "updates_per_hour", "entity_id", "start_date"}:
+        if sort in {"record_count", "updates_per_hour", "updates_per_day", "entity_id", "start_date"}:
             sql += f" ORDER BY {sort} {'DESC' if order == 'desc' else 'ASC'}"
         cur = await db.execute(sql, params)
         return [dict(row) for row in await cur.fetchall()]

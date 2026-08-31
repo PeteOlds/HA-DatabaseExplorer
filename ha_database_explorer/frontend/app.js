@@ -2,6 +2,10 @@
 // opened directly or behind a Home Assistant ingress prefix (e.g. /api/hassio_ingress/TOKEN/).
 const BASE = location.pathname.replace(/\/[^/]*$/, "") + "/";
 
+function fmtMB(mb) {
+  return mb != null && mb !== "" ? Math.round(mb).toLocaleString() + " MB" : "Unknown";
+}
+
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
 
@@ -241,7 +245,7 @@ async function renderDashboard() {
   view.innerHTML = "";
   const grid = el("div", { class: "grid" });
   grid.append(
-    metricCard("Total disk footprint", `${global.total_size_mb} MB`),
+    metricCard("Total disk footprint", fmtMB(global.total_size_mb)),
     metricCard("Total records", global.total_records.toLocaleString()),
     metricCard("Databases", global.database_count),
     metricCard("Overlapping entities", global.overlap_entity_count)
@@ -254,7 +258,7 @@ async function renderDashboard() {
     .filter(mb => mb != null && mb > 0)
     .reduce((sum, mb) => sum + mb, 0);
   for (const [eng, mb] of Object.entries(global.by_engine_mb || {})) {
-    const sizeText = mb ? `${mb} MB` : "Unknown";
+    const sizeText = fmtMB(mb);
     const pct = totalKnown && mb ? (mb / totalKnown) * 100 : 0;
     engineCard.append(el("p", {}, `${eng}: ${sizeText} (${pct.toFixed(1)}%)`));
     const bar = el("div", { class: "bar" });
@@ -269,7 +273,7 @@ async function renderDashboard() {
     "<thead><tr><th>Database</th><th>Engine</th><th>Status</th><th>Size</th><th>Last scanned</th><th>Duration</th></tr></thead>";
   const dbBody = el("tbody");
   dbs.forEach((d) => {
-    const size = d.total_size_mb != null ? `${d.total_size_mb} MB` : "Unknown";
+    const size = fmtMB(d.total_size_mb);
     const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
     const duration = d.scan_duration_s != null ? `${d.scan_duration_s}s` : "—";
     dbBody.append(
@@ -351,7 +355,7 @@ async function renderEntities() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ retention_days: parseInt(days.value) || 30 }),
       });
-      result.textContent = `Keeping ${r.retention_days} days would free ~${r.total_freed_mb} MB across ${r.entities.length} entities.`;
+      result.textContent = `Keeping ${r.retention_days} days would free ~${fmtMB(r.total_freed_mb)} across ${r.entities.length} entities.`;
     } catch (e) {
       result.textContent = e.message;
     }
@@ -360,9 +364,11 @@ async function renderEntities() {
   card.append(advisor);
   const table = el("table");
   table.innerHTML =
-    "<thead><tr><th>entity_id</th><th>records</th><th>oldest</th><th>updates/hr</th></tr></thead>";
+    "<thead><tr><th data-sort='entity_id'>entity_id ▲</th><th data-sort='record_count'>records ▼</th><th data-sort='start_date'>oldest</th><th data-sort='updates_per_day'>updates/day</th></tr></thead>";
   const tbody = el("tbody");
   table.append(tbody);
+  let currentSort = "record_count";
+  let currentOrder = "desc";
   const draw = (q) => {
     tbody.innerHTML = "";
     rows
@@ -373,11 +379,31 @@ async function renderEntities() {
           el(
             "tr",
             {},
-            `<td>${r.entity_id}</td><td>${r.record_count}</td><td>${r.start_date || "—"}</td><td>${r.updates_per_hour}</td>`
+            `<td>${r.entity_id}</td><td>${r.record_count}</td><td>${r.start_date || "—"}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td>`
           )
         )
       );
   };
+  table.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.onclick = async () => {
+      const sort = th.dataset.sort;
+      if (sort === currentSort) {
+        currentOrder = currentOrder === "desc" ? "asc" : "desc";
+      } else {
+        currentSort = sort;
+        currentOrder = "desc";
+      }
+      const res = await api(`/api/metrics/entities?sort=${currentSort}&order=${currentOrder}`);
+      rows.length = 0;
+      rows.push(...res);
+      draw("");
+      table.querySelectorAll("th[data-sort]").forEach((h) => {
+        const arrow = h.dataset.sort === currentSort ? (currentOrder === "desc" ? " ▼" : " ▲") : "";
+        h.textContent = h.textContent.replace(/ [▲▼]$/, "") + arrow;
+      });
+    };
+  });
   search.oninput = () => draw(search.value);
   draw("");
   card.append(table);
