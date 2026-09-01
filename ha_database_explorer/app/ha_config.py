@@ -15,6 +15,8 @@ import re
 import urllib.parse
 from pathlib import Path
 
+import ruamel.yaml
+
 HASS_CONFIG = Path("/config/configuration.yaml")
 STORAGE_CONFIG_ENTRIES = Path("/config/.storage/core.config_entries")
 
@@ -127,10 +129,76 @@ def _discover_from_storage() -> list[dict]:
     return out
 
 
+def _extract_purge_keep_days_from_yaml(text: str) -> int | None:
+    """Extract purge_keep_days from HA config YAML text using ruamel.yaml round-trip.
+
+    Returns the integer value, or None if not found/unparseable.
+    ruamel.yaml preserves !include / !secret tags; if they prevent parsing we fall back to None.
+    """
+    try:
+        yaml = ruamel.yaml.YAML(typ="rt")
+        data = yaml.load(text)
+        if data and "recorder" in data:
+            purge = data["recorder"].get("purge_keep_days")
+            if isinstance(purge, int):
+                return purge
+        return None
+    except Exception:
+        return None
+
+
+def parse_purge_keep_days() -> int | None:
+    """Read purge_keep_days from /config/configuration.yaml using ruamel.yaml round-trip.
+
+    Returns integer days, or None if not set / unparseable.
+    """
+    HASS_CONFIG = Path("/config/configuration.yaml")
+    if not HASS_CONFIG.exists():
+        return None
+    try:
+        text = HASS_CONFIG.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+    return _extract_purge_keep_days_from_yaml(text)
+
+
+def parse_purge_keep_days_from_storage() -> int | None:
+    """Read purge_keep_days from /config/.storage/core.config_entries.
+
+    Returns integer days, or None if not set.
+    """
+    STORAGE_CONFIG_ENTRIES = Path("/config/.storage/core.config_entries")
+    if not STORAGE_CONFIG_ENTRIES.exists():
+        return None
+    try:
+        data = json.loads(STORAGE_CONFIG_ENTRIES.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return None
+    for entry in data.get("data", {}).get("entries", []):
+        if entry.get("domain") != "recorder":
+            continue
+        opts = entry.get("options") or {}
+        val = opts.get("purge_keep_days")
+        if val is not None:
+            return int(val)
+        # some entries store under data sub-key
+        ddata = entry.get("data") or {}
+        val = ddata.get("purge_keep_days")
+        if val is not None:
+            return int(val)
+    return None
+
+
 async def discover_ha_config() -> list[dict]:
     seen: set[tuple] = set()
     merged: list[dict] = []
     for src in (_discover_from_yaml(), _discover_from_storage()):
+        # enrichment: add purge_keep_days from HA config
+        purge = await parse_purge_keep_days() if src.get("detected") == "ha_config" else None
+        if purge is None:
+            purge = parse_purge_keep_days_from_storage()
+        if "purge_keep_days" not in src or purge is not None:
+            src["purge_keep_days"] = purge
         key = (src.get("engine"), src.get("host") or src.get("path"), src.get("database"))
         if key in seen:
             continue

@@ -21,12 +21,18 @@ from .cache import (
     init_cache,
     upsert_database,
 )
-from .config import DEFAULT_SCAN_CRON
+from .config import DEFAULT_SCAN_CRON, get_scan_cron, set_scan_cron
 from .connectors import build_connector
 from .crypto import safe_config_dump
 from .discovery import discover_all
 from .scan import JOBS, run_scan, subscribe, unsubscribe
 from .store import add_connection, load_connections, remove_connection, update_connection
+from .ha_config import parse_purge_keep_days, parse_purge_keep_days_from_storage
+from .ha_config_write import write_purge_keep_days
+
+
+# Global scheduler reference for runtime rescheduling
+scheduler: AsyncIOScheduler | None = None
 
 
 def _suppress_dns_noise(loop, context) -> None:
@@ -43,6 +49,7 @@ def _suppress_dns_noise(loop, context) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global scheduler
     asyncio.get_event_loop().set_exception_handler(_suppress_dns_noise)
     await init_cache()
     # Zero-config bootstrap: if no databases are configured yet, auto-discover and
@@ -59,7 +66,7 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         lambda: _spawn_scan(uuid.uuid4().hex),
-        CronTrigger.from_crontab(DEFAULT_SCAN_CRON),
+        CronTrigger.from_crontab(get_scan_cron()),
         id="deep_scan",
         replace_existing=True,
     )
@@ -74,6 +81,53 @@ app = FastAPI(title="HA Database Explorer", version="0.2.2", lifespan=lifespan)
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/config/scan-cron")
+async def get_scan_cron_endpoint():
+    cron = get_scan_cron()
+    # Calculate next run time for display
+    next_run = None
+    try:
+        trigger = CronTrigger.from_crontab(cron)
+        next_dt = trigger.get_next_fire_time(None, datetime.now(timezone.utc))
+        if next_dt:
+            next_run = next_dt.isoformat()
+    except Exception:
+        pass
+    return {"cron": cron, "next_run": next_run}
+
+
+class ScanCronRequest(BaseModel):
+    cron: str
+
+
+@app.post("/api/config/scan-cron")
+async def set_scan_cron_endpoint(req: ScanCronRequest):
+    global scheduler
+    # Validate cron expression
+    try:
+        CronTrigger.from_crontab(req.cron)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid cron expression: {e}")
+    # Persist
+    set_scan_cron(req.cron)
+    # Reschedule job
+    if scheduler:
+        scheduler.reschedule_job(
+            "deep_scan",
+            trigger=CronTrigger.from_crontab(req.cron),
+        )
+    # Calculate next run
+    next_run = None
+    try:
+        trigger = CronTrigger.from_crontab(req.cron)
+        next_dt = trigger.get_next_fire_time(None, datetime.now(timezone.utc))
+        if next_dt:
+            next_run = next_dt.isoformat()
+    except Exception:
+        pass
+    return {"cron": req.cron, "next_run": next_run, "saved": True}
 
 
 def _spawn_scan(job_id: str) -> None:
@@ -156,9 +210,160 @@ async def list_databases():
                 "last_scanned": cached.get("last_scanned"),
                 "scan_duration_s": cached.get("scan_duration_s"),
                 "detected": c.get("detected"),
+                "retention_days": cached.get("retention_days"),
+                "influxdb_rp_json": cached.get("influxdb_rp_json"),
             }
         )
     return out
+
+
+@app.get("/api/databases/{name}/retention")
+async def get_retention(name: str):
+    """Return the retention info for a specific configured database.
+    
+    For HA Recorder: returns purge_keep_days
+    For InfluxDB: returns retention policies list
+    """
+    conns = load_connections()
+    matching = [c for c in conns if c.get("connection_name") == name]
+    if not matching:
+        raise HTTPException(status_code=404, detail="database not found")
+    conn = matching[0]
+    engine = conn.get("engine")
+    # Check cache first via get_databases
+    rows = await get_databases()
+    cached = next((r for r in rows if r.get("connection_name") == name), None)
+    
+    if engine == "influxdb":
+        if cached and cached.get("influxdb_rp_json") is not None:
+            import json
+            return {"influxdb_rp": json.loads(cached["influxdb_rp_json"]), "source": "cache"}
+        return {"influxdb_rp": [], "source": "not_set"}
+    
+    # HA Recorder (SQLite/MySQL/PostgreSQL)
+    if cached and cached.get("retention_days") is not None:
+        return {"retention_days": cached["retention_days"], "source": "cache"}
+    # Fall back to reading from HA config
+    days = parse_purge_keep_days_from_storage()
+    if days is not None:
+        return {"retention_days": days, "source": "storage"}
+    days = parse_purge_keep_days()
+    if days is not None:
+        return {"retention_days": days, "source": "yaml"}
+    return {"retention_days": None, "source": "not_set"}
+
+
+@app.post("/api/databases/{name}/retention")
+async def set_retention(name: str, req: dict):
+    """Set retention for a specific database.
+    
+    HA Recorder (SQLite/MySQL/PostgreSQL):
+        Body: { "retention_days": 30 }   or   { "retention_days": null } to clear
+    
+    InfluxDB:
+        Body: { "influxdb_rp": { "action": "create|alter|delete", "name": "autogen", "duration": "30d", "make_default": true } }
+    """
+    # Find the connection by name
+    conns = load_connections()
+    matching = [c for c in conns if c.get("connection_name") == name]
+    if not matching:
+        raise HTTPException(status_code=404, detail="database not found")
+    conn = matching[0]
+    engine = conn.get("engine")
+    
+    if engine == "influxdb":
+        rp_req = req.get("influxdb_rp")
+        if not rp_req:
+            raise HTTPException(status_code=400, detail="influxdb_rp required for InfluxDB")
+        
+        action = rp_req.get("action", "create")
+        rp_name = rp_req.get("name")
+        if not rp_name:
+            raise HTTPException(status_code=400, detail="RP name required")
+        
+        connector = build_connector(engine, name, conn)
+        
+        if action == "delete":
+            ok = await connector.delete_retention_policy(rp_name)
+            if not ok:
+                raise HTTPException(status_code=500, detail="failed to delete retention policy")
+        else:
+            duration = rp_req.get("duration")
+            if not duration:
+                raise HTTPException(status_code=400, detail="duration required for create/alter")
+            
+            # Validate duration format: INF or N[d|h|w]
+            import re
+            if duration != "INF" and not re.match(r'^\d+[dhw]$', duration):
+                raise HTTPException(status_code=400, detail="duration must be 'INF' or format like '30d', '7d', '24h', '4w'")
+            
+            shard_group_duration = rp_req.get("shard_group_duration")
+            replica_n = rp_req.get("replica_n")
+            make_default = rp_req.get("make_default", False)
+            
+            ok = await connector.set_retention_policy(
+                rp_name, duration, shard_group_duration, replica_n, make_default
+            )
+            if not ok:
+                raise HTTPException(status_code=500, detail="failed to create/alter retention policy")
+        
+        # Refresh cache with new RP list
+        try:
+            rp_policies = await connector.get_retention_policies()
+            import json
+            await upsert_database(
+                conn["engine"],
+                conn["connection_name"],
+                conn.get("total_size_mb"),
+                "connected",
+                influxdb_rp_json=json.dumps(rp_policies),
+            )
+        except Exception:
+            pass
+        
+        return {"influxdb_rp": rp_policies if "rp_policies" in locals() else [], "saved": True, "action": action}
+    
+    # HA Recorder (SQLite/MySQL/PostgreSQL)
+    days = req.get("retention_days")
+    # Write back to HA config via ruamel.yaml round-trip
+    ok = write_purge_keep_days(name, days)
+    if not ok:
+        raise HTTPException(status_code=500, detail="failed to write HA config")
+    # Update cache
+    await upsert_database(
+        conn["engine"],
+        conn["connection_name"],
+        conn.get("total_size_mb"),
+        "connected",
+        retention_days=days,
+    )
+    return {"retention_days": days, "saved": True, "source": conn.get("detected")}
+
+
+@app.post("/api/databases/{name}/retention/refresh")
+async def refresh_retention(name: str):
+    """Re-read purge_keep_days from HA config and update cache.
+
+    Useful when the user edited configuration.yaml outside the add-on.
+    """
+    conns = load_connections()
+    matching = [c for c in conns if c.get("connection_name") == name]
+    if not matching:
+        raise HTTPException(status_code=404, detail="database not found")
+    conn = matching[0]
+    # Re-detect from both sources
+    days_yaml = parse_purge_keep_days()
+    days_storage = parse_purge_keep_days_from_storage()
+    # Prefer storage if available, otherwise yaml
+    days = days_storage if days_storage is not None else days_yaml
+    await upsert_database(
+        conn["engine"],
+        conn["connection_name"],
+        conn.get("total_size_mb"),
+        "connected",
+        retention_days=days,
+    )
+    return {"retention_days": days, "refreshed": True, "source": conn.get("detected") or "unknown"}
 
 
 @app.post("/api/databases")
@@ -296,6 +501,34 @@ async def metrics_entities(
 @app.get("/api/metrics/overlap")
 async def metrics_overlap():
     return await get_overlap()
+
+
+@app.get("/api/entities/{db_id}/{entity_id}/values")
+async def get_entity_values(db_id: str, entity_id: str, limit: int = 100, offset: int = 0):
+    """Get recent state values for a specific entity from a specific database."""
+    # Find the connection by db_id
+    rows = await get_databases()
+    cached = next((r for r in rows if r.get("id") == db_id), None)
+    if not cached:
+        raise HTTPException(status_code=404, detail="database not found")
+    
+    conn_name = cached.get("connection_name")
+    conns = load_connections()
+    matching = [c for c in conns if c.get("connection_name") == conn_name]
+    if not matching:
+        raise HTTPException(status_code=404, detail="database connection not found")
+    conn = matching[0]
+    
+    # Build connector and query
+    connector = build_connector(conn["engine"], conn_name, conn)
+    if not hasattr(connector, "get_entity_values"):
+        raise HTTPException(status_code=400, detail=f"Entity values not supported for {conn['engine']}")
+    
+    try:
+        values = await connector.get_entity_values(entity_id, limit=limit, offset=offset)
+        return {"entity_id": entity_id, "db_id": db_id, "values": values, "limit": limit, "offset": offset}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
 
 
 class ExclusionRequest(BaseModel):

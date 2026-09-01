@@ -77,7 +77,8 @@ class MySQLConnector(BaseConnector):
                         """
                         SELECT sm.entity_id AS entity_id,
                                COUNT(*) AS record_count,
-                               MIN(s.last_updated) AS start_date
+                               MIN(COALESCE(NULLIF(s.last_updated, ''), FROM_UNIXTIME(s.last_updated_ts))) AS start_date,
+                               MAX(COALESCE(NULLIF(s.last_updated, ''), FROM_UNIXTIME(s.last_updated_ts))) AS end_date
                         FROM states s
                         JOIN states_meta sm ON sm.metadata_id = s.metadata_id
                         GROUP BY sm.metadata_id
@@ -91,9 +92,42 @@ class MySQLConnector(BaseConnector):
                         entity_id=r["entity_id"],
                         record_count=r["record_count"],
                         start_date=_iso(r["start_date"]),
+                        end_date=_iso(r["end_date"]),
                         updates_per_hour=_rate(r["record_count"], r["start_date"]),
                     )
                 )
+            return out
+        finally:
+            pool.close()
+            await pool.wait_closed()
+
+    async def get_entity_values(self, entity_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Get recent state values for a specific entity."""
+        pool = await aiomysql.create_pool(**self._pool_args())
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+                    await cur.execute(
+                        """
+                        SELECT s.state, s.attributes, s.last_updated, s.last_updated_ts
+                        FROM states s
+                        JOIN states_meta sm ON sm.metadata_id = s.metadata_id
+                        WHERE sm.entity_id = %s
+                        ORDER BY s.last_updated_ts DESC
+                        LIMIT %s OFFSET %s
+                        """,
+                        (entity_id, limit, offset),
+                    )
+                    rows = await cur.fetchall()
+            out = []
+            for r in rows:
+                out.append({
+                    "state": r["state"],
+                    "attributes": r["attributes"],
+                    "last_updated": _iso(r["last_updated"]),
+                    "last_updated_ts": r["last_updated_ts"],
+                })
             return out
         finally:
             pool.close()
@@ -114,7 +148,13 @@ def _rate(count: int, start) -> float:
     try:
         from datetime import datetime, timezone
 
-        dt = start if hasattr(start, "isoformat") else datetime.fromisoformat(str(start))
+        if hasattr(start, "isoformat"):
+            dt = start
+        else:
+            dt = datetime.fromisoformat(str(start))
+        # Ensure dt is timezone-aware (assume UTC if naive)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
         return round(count / hours, 4) if hours > 0 else 0.0
     except Exception:

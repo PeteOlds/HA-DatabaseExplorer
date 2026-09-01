@@ -92,16 +92,21 @@ class InfluxDBConnector(BaseConnector):
                     fst = await self._query(
                         f'SELECT first(value) FROM /.*/ WHERE "entity_id" = \'{escaped_id}\''
                     )
+                    lst = await self._query(
+                        f'SELECT last(value) FROM /.*/ WHERE "entity_id" = \'{escaped_id}\''
+                    )
                 except Exception:
                     return None
             record_count = int(cnt[0][1]) if cnt and len(cnt[0]) > 1 else 0
             start = fst[0][0] if fst else None
+            end = lst[0][0] if lst else None
             if record_count == 0:
                 return None
             return EntityMetric(
                 entity_id=entity_id,
                 record_count=record_count,
                 start_date=start,
+                end_date=end,
                 updates_per_hour=_rate(record_count, start),
             )
 
@@ -110,6 +115,114 @@ class InfluxDBConnector(BaseConnector):
 
     async def domain_metrics(self, entities: list[EntityMetric]) -> list[DomainMetric]:
         return await super().domain_metrics(entities)
+
+    async def get_retention_policies(self) -> list[dict]:
+        """Get all retention policies for the configured database.
+        
+        Returns list of dicts with: name, duration, shard_group_duration, replica_n, default
+        """
+        try:
+            rows = await self._query("SHOW RETENTION POLICIES")
+        except Exception:
+            return []
+        policies = []
+        for row in rows:
+            # row format: [name, duration, shardGroupDuration, replicaN, default]
+            if len(row) >= 5:
+                policies.append({
+                    "name": row[0],
+                    "duration": row[1],
+                    "shard_group_duration": row[2],
+                    "replica_n": row[3],
+                    "default": bool(row[4]),
+                })
+        return policies
+
+    async def get_entity_rp(self, entity_id: str) -> str | None:
+        """Determine which retention policy an entity uses by querying its measurements."""
+        try:
+            # Get measurements that contain this entity_id
+            # Query SHOW MEASUREMENTS with tag filter
+            escaped_id = entity_id.replace("\\", "\\\\").replace("'", "\\'")
+            rows = await self._query(
+                f'SHOW MEASUREMENTS WHERE "entity_id" = \'{escaped_id}\''
+            )
+            if not rows:
+                return None
+            # The first measurement found - get its RP via SHOW RETENTION POLICIES
+            # Actually, we need to check which RP the measurement belongs to
+            # For InfluxDB 1.8, measurements are in the default RP unless specified
+            # Let's check the default RP
+            policies = await self.get_retention_policies()
+            default_rp = next((p["name"] for p in policies if p.get("default")), None)
+            return default_rp
+        except Exception:
+            return None
+
+    async def set_retention_policy(self, name: str, duration: str, shard_group_duration: str | None = None, replica_n: int | None = None, make_default: bool = False) -> bool:
+        """Create or alter a retention policy.
+        
+        Args:
+            name: RP name
+            duration: Duration string (e.g., '30d', '7d', 'INF')
+            shard_group_duration: Optional shard group duration
+            replica_n: Optional replication factor
+            make_default: Whether to make this the default RP
+        """
+        try:
+            # Check if RP exists
+            policies = await self.get_retention_policies()
+            exists = any(p["name"] == name for p in policies)
+            
+            parts = [f'RETENTION POLICY "{name}" ON "{self.database}"']
+            if exists:
+                parts[0] = "ALTER " + parts[0]
+            else:
+                parts[0] = "CREATE " + parts[0]
+            
+            parts.append(f"DURATION {duration}")
+            if shard_group_duration:
+                parts.append(f"SHARD GROUP DURATION {shard_group_duration}")
+            if replica_n is not None:
+                parts.append(f"REPLICATION {replica_n}")
+            if make_default:
+                parts.append("DEFAULT")
+            
+            query = " ".join(parts)
+            await self._query(query)
+            return True
+        except Exception:
+            return False
+
+    async def delete_retention_policy(self, name: str) -> bool:
+        """Delete a retention policy."""
+        try:
+            query = f'DROP RETENTION POLICY "{name}" ON "{self.database}"'
+            await self._query(query)
+            return True
+        except Exception:
+            return False
+
+    async def get_entity_values(self, entity_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Get recent state values for a specific entity from all measurements."""
+        try:
+            escaped_id = entity_id.replace("\\", "\\\\").replace("'", "\\'")
+            # Query all measurements for this entity_id
+            rows = await self._query(
+                f'SELECT * FROM /.*/ WHERE "entity_id" = \'{escaped_id}\' ORDER BY time DESC LIMIT {limit} OFFSET {offset}'
+            )
+            out = []
+            for row in rows:
+                # row format: [time, value, ...other columns...]
+                if len(row) >= 2:
+                    out.append({
+                        "time": row[0],
+                        "value": row[1],
+                        # Include all other columns as attributes
+                    })
+            return out
+        except Exception:
+            return []
 
 
 def _rate(count: int, start: str | None) -> float:

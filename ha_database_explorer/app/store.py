@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
-from .config import CONFIG_FILE
 from .crypto import deserialize_config, serialize_config
+
+DATA_DIR = Path(os.environ.get("APP_DATA", "/data"))
+CONNECTIONS_FILE = DATA_DIR / "connections.json"
 
 
 def _key(c: dict) -> tuple:
@@ -13,10 +17,10 @@ def _key(c: dict) -> tuple:
 
 
 def load_connections() -> list[dict]:
-    if not CONFIG_FILE.exists():
+    if not CONNECTIONS_FILE.exists():
         return []
     try:
-        raw = json.loads(CONFIG_FILE.read_text())
+        raw = json.loads(CONNECTIONS_FILE.read_text())
     except Exception:
         return []
     conns = [deserialize_config(r) for r in raw]
@@ -33,7 +37,7 @@ def load_connections() -> list[dict]:
 
 def save_connections(connections: list[dict]) -> None:
     raw = [serialize_config(c) for c in connections]
-    CONFIG_FILE.write_text(json.dumps(raw, indent=2))
+    CONNECTIONS_FILE.write_text(json.dumps(raw, indent=2))
 
 
 def add_connection(conn: dict) -> list[dict]:

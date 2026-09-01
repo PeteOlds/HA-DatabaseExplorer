@@ -10,7 +10,7 @@ DATA_DIR = Path(os.environ.get("APP_DATA", "/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CACHE_DB = DATA_DIR / "cache.db"
-CONFIG_FILE = DATA_DIR / "config.json"
+CONFIG_FILE = DATA_DIR / "app_config.json"
 SECRET_KEY_FILE = DATA_DIR / "secret.key"
 # HAOS mounts the add-on's options here.
 OPTIONS_FILE = DATA_DIR / "options.json"
@@ -40,8 +40,47 @@ def _load_options() -> dict:
         return {}
 
 
+def _load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CONFIG_FILE.read_text())
+        # Migration: if config contains connections array (old format), extract scan_cron and reset
+        if isinstance(data, list):
+            # Old format: connections were stored here. Migrate to empty config.
+            _save_config({})
+            return {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_config(config: dict) -> None:
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+
 _OPTIONS = _load_options()
-DEFAULT_SCAN_CRON = _OPTIONS.get("scan_cron") or os.environ.get("SCAN_CRON", "30 3 * * *")
+_CONFIG = _load_config()
+
+# Precedence: config.json (persistent) > options.json (add-on UI) > env > default
+DEFAULT_SCAN_CRON = (
+    _CONFIG.get("scan_cron")
+    or _OPTIONS.get("scan_cron")
+    or os.environ.get("SCAN_CRON", "30 3 * * *")
+)
+
+
+def get_scan_cron() -> str:
+    """Get current scan cron (reads from config.json for runtime changes)."""
+    config = _load_config()
+    return config.get("scan_cron") or _OPTIONS.get("scan_cron") or os.environ.get("SCAN_CRON", "30 3 * * *")
+
+
+def set_scan_cron(cron: str) -> None:
+    """Persist scan cron to config.json."""
+    config = _load_config()
+    config["scan_cron"] = cron
+    _save_config(config)
 
 
 def _load_manual_sizes() -> dict:

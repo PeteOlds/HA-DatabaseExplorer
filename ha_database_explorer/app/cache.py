@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS databases (
     total_size_mb REAL,
     last_scanned TEXT,
     status TEXT NOT NULL,
-    scan_duration_s REAL
+    scan_duration_s REAL,
+    retention_days INTEGER,
+    influxdb_rp_json TEXT
 );
 CREATE TABLE IF NOT EXISTS domain_metrics (
     id TEXT PRIMARY KEY,
@@ -33,7 +35,9 @@ CREATE TABLE IF NOT EXISTS entity_metrics (
     entity_id TEXT NOT NULL,
     record_count INTEGER NOT NULL,
     start_date TEXT,
-    updates_per_hour REAL
+    end_date TEXT,
+    updates_per_hour REAL,
+    influxdb_rp TEXT
 );
 CREATE TABLE IF NOT EXISTS overlap_matrix (
     entity_id TEXT PRIMARY KEY,
@@ -55,6 +59,26 @@ async def init_cache() -> None:
         columns = [row[1] for row in await cur.fetchall()]
         if "scan_duration_s" not in columns:
             await db.execute("ALTER TABLE databases ADD COLUMN scan_duration_s REAL")
+        # Migration: add retention_days column if missing (added in 0.3.0)
+        cur = await db.execute("PRAGMA table_info(databases)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "retention_days" not in columns:
+            await db.execute("ALTER TABLE databases ADD COLUMN retention_days INTEGER")
+        # Migration: add influxdb_rp_json column if missing (added in 0.3.0)
+        cur = await db.execute("PRAGMA table_info(databases)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "influxdb_rp_json" not in columns:
+            await db.execute("ALTER TABLE databases ADD COLUMN influxdb_rp_json TEXT")
+        # Migration: add influxdb_rp column to entity_metrics if missing (added in 0.3.0)
+        cur = await db.execute("PRAGMA table_info(entity_metrics)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "influxdb_rp" not in columns:
+            await db.execute("ALTER TABLE entity_metrics ADD COLUMN influxdb_rp TEXT")
+        # Migration: add end_date column to entity_metrics (added in 0.2.3)
+        cur = await db.execute("PRAGMA table_info(entity_metrics)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "end_date" not in columns:
+            await db.execute("ALTER TABLE entity_metrics ADD COLUMN end_date TEXT")
         await db.commit()
     # Heal any historical duplicate rows left by the old uuid4-based upsert.
     await _dedupe_cache()
@@ -91,6 +115,8 @@ async def upsert_database(
     total_size_mb: float | None,
     status: str,
     scan_duration_s: float | None = None,
+    retention_days: int | None = None,
+    influxdb_rp_json: str | None = None,
 ) -> str:
     db_id = _db_id(engine, connection_name)
     async with aiosqlite.connect(CACHE_DB) as db:
@@ -106,9 +132,9 @@ async def upsert_database(
         )
         await db.execute(
             "INSERT INTO databases "
-            "(id, engine, connection_name, total_size_mb, last_scanned, status, scan_duration_s) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (db_id, engine, connection_name, total_size_mb, _now(), status, scan_duration_s),
+            "(id, engine, connection_name, total_size_mb, last_scanned, status, scan_duration_s, retention_days, influxdb_rp_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (db_id, engine, connection_name, total_size_mb, _now(), status, scan_duration_s, retention_days, influxdb_rp_json),
         )
         for oid in old_ids:
             await db.execute("DELETE FROM domain_metrics WHERE db_id = ?", (oid,))
@@ -162,15 +188,17 @@ async def replace_entity_metrics(db_id: str, rows: list[dict]) -> None:
         for r in rows:
             await db.execute(
                 "INSERT INTO entity_metrics "
-                "(id, db_id, entity_id, record_count, start_date, updates_per_hour) "
-                "VALUES (?,?,?,?,?,?)",
+                "(id, db_id, entity_id, record_count, start_date, end_date, updates_per_hour, influxdb_rp) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     str(uuid.uuid4()),
                     db_id,
                     r["entity_id"],
                     r["record_count"],
                     r.get("start_date"),
+                    r.get("end_date"),
                     r.get("updates_per_hour"),
+                    r.get("influxdb_rp"),
                 ),
             )
         await db.commit()
@@ -228,15 +256,22 @@ async def get_entity_metrics(
 ) -> list[dict]:
     async with aiosqlite.connect(CACHE_DB) as db:
         db.row_factory = aiosqlite.Row
-        sql = "SELECT *, updates_per_hour * 24.0 AS updates_per_day FROM entity_metrics WHERE 1=1"
+        sql = """
+            SELECT em.*, 
+                   updates_per_hour * 24.0 AS updates_per_day,
+                   d.connection_name
+            FROM entity_metrics em
+            LEFT JOIN databases d ON em.db_id = d.id
+            WHERE 1=1
+        """
         params: list = []
         if domain:
-            sql += " AND domain = ?"
+            sql += " AND em.domain = ?"
             params.append(domain)
         if db_id:
-            sql += " AND db_id = ?"
+            sql += " AND em.db_id = ?"
             params.append(db_id)
-        if sort in {"record_count", "updates_per_hour", "updates_per_day", "entity_id", "start_date"}:
+        if sort in {"record_count", "updates_per_hour", "updates_per_day", "entity_id", "start_date", "end_date", "connection_name"}:
             sql += f" ORDER BY {sort} {'DESC' if order == 'desc' else 'ASC'}"
         cur = await db.execute(sql, params)
         return [dict(row) for row in await cur.fetchall()]

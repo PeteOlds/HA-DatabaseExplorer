@@ -11,6 +11,7 @@ class EntityMetric:
     entity_id: str
     record_count: int
     start_date: str | None
+    end_date: str | None
     updates_per_hour: float
 
 

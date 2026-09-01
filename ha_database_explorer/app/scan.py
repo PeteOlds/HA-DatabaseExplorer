@@ -17,6 +17,8 @@ from .cache import (
 )
 from .config import MANUAL_SIZES
 from .connectors import build_connector
+from .discovery import discover_all
+from .ha_config import parse_purge_keep_days
 from .store import load_connections
 
 JOBS: dict[str, dict] = {}
@@ -71,7 +73,29 @@ async def run_scan(job_id: str) -> None:
                 entities = await connector.entity_metrics()
                 domains = await connector.domain_metrics(entities)
                 db_duration_s = round(time.monotonic() - db_start_ts, 1)
-                db_id = await upsert_database(conn["engine"], name, size, "connected", db_duration_s)
+                
+                # Get InfluxDB retention policies if applicable
+                influxdb_rp_json = None
+                if conn["engine"] == "influxdb":
+                    try:
+                        rp_policies = await connector.get_retention_policies()
+                        import json
+                        influxdb_rp_json = json.dumps(rp_policies)
+                        # Also get RP per entity
+                        for e in entities:
+                            e.influxdb_rp = await connector.get_entity_rp(e.entity_id)
+                    except Exception:
+                        pass
+                
+                db_id = await upsert_database(
+                    conn["engine"],
+                    name,
+                    size,
+                    "connected",
+                    db_duration_s,
+                    retention_days=parse_purge_keep_days(),
+                    influxdb_rp_json=influxdb_rp_json,
+                )
                 await replace_entity_metrics(db_id, [e.__dict__ for e in entities])
                 await replace_domain_metrics(
                     db_id, [d.__dict__ for d in domains]
