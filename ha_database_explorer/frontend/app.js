@@ -1,13 +1,16 @@
-// Resolve the API base: use /api/ under HA ingress, else relative path
+// Resolve the API base: under HA ingress, use the ingress path; else relative path
 const BASE = (() => {
   const path = location.pathname;
+  // HA ingress path: /api/hassio_ingress/<token>/
   if (path.includes("/api/hassio_ingress/")) {
-    return "/api/";
+    // Use the full ingress path as base (e.g., /api/hassio_ingress/token/)
+    const match = path.match(/^(\/api\/hassio_ingress\/[^/]+\/)/);
+    return match ? match[1] : "/api/";
   }
   return path.replace(/\/[^/]*$/, "") + "/";
 })();
 
-const VERSION = "0.3.5"; // INJECTED_AT_BUILD - update on release
+const VERSION = "0.3.7"; // INJECTED_AT_BUILD - update on release
 
 function fmtMB(mb) {
   return mb != null && mb !== "" ? Math.round(mb).toLocaleString() + " MB" : "Unknown";
@@ -456,7 +459,10 @@ async function renderDashboard() {
     api("/api/databases"),
     api("/api/scan/last").catch(() => null),
   ]);
-  view.innerHTML = "";
+  if (!global || global.database_count === 0) {
+    view.innerHTML = "<div class='card'><p class='muted'>No data available yet. Configure databases in Setup tab.</p></div>";
+    return;
+  }
   const grid = el("div", { class: "grid" });
   grid.append(
     metricCard("Total disk footprint", fmtMB(global.total_size_mb)),
@@ -555,6 +561,10 @@ async function renderEntities() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
   const rows = await api("/api/metrics/entities?sort=record_count&order=desc");
   view.innerHTML = "";
+  if (!rows.length) {
+    view.innerHTML = "<div class='card'><p class='muted'>No entities found. Run a scan in Setup tab.</p></div>";
+    return;
+  }
   const card = el("div", { class: "card" });
   const headerRow = el("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px" });
   headerRow.append(el("h3", { style: "margin:0" }, "Entity Bloat Explorer"));
@@ -660,6 +670,10 @@ async function renderOverlap() {
     api("/api/databases"),
   ]);
   view.innerHTML = "";
+  if (!rows.length) {
+    view.innerHTML = "<div class='card'><p class='muted'>No overlapping entities detected. Run a scan to detect overlap.</p></div>";
+    return;
+  }
   const card = el("div", { class: "card" });
   card.append(el("h3", {}, "Overlap Matrix & Exclusion Generator"));
   const split = el("div", { class: "split" });
