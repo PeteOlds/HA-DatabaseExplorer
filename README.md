@@ -77,9 +77,57 @@ pytest
 uvicorn app.main:app --port 8099
 ```
 
-## Notes / limitations
+## Usage Guide
 
-- `estimated_size_mb` is an **approximation** (no per-row byte accounting in InnoDB/SQLite).
-- InfluxDB 1.8 exposes no disk-size API; size comes from the Docker socket (`du` on the
-  mounted volume) or a manual entry.
-- PostgreSQL/TimescaleDB support is deferred (interface raises `NotImplementedError`).
+### First Run
+1. **Open the add-on** via the *Database Explorer* sidebar panel (ingress).
+2. **Setup tab**: Click **Discover databases** to auto-detect your HA Recorder (SQLite/MariaDB) and InfluxDB.
+3. **Save** each discovered connection. For external databases, use the manual form (Host, Port, User, Password).
+4. The **Scan Schedule** card lets you set the cron expression (default `30 3 * * *` = 03:30 daily).
+
+### Dashboard
+- **Total disk footprint**, **Total records**, **Databases count**, **Overlapping entities**
+- **Storage by engine** (bar chart) and **Storage by HA domain** (pie chart)
+
+### Entities Tab (Entity Bloat Explorer)
+- Searchable, sortable, filterable table of every tracked entity
+- Columns: entity_id, records, oldest, latest, updates/day, source (database)
+- **Click any entity_id** → opens a modal with recent state history (timestamp, state, attributes)
+- Filter by source database using the dropdown
+- **Retention Advisor** (bottom): enter retention days → calculates estimated freed space per entity
+
+### Overlap Tab (Overlap Matrix)
+- Shows entities present in multiple databases
+- ★ = primary database (fewest records)
+- Check entities → generates `recorder: exclude:` YAML for HA configuration
+
+### Setup Tab (Retention Management)
+- **Configured databases table** shows retention policy per database:
+  - **HA Recorder (SQLite/MariaDB/PostgreSQL)**: `purge_keep_days` from HA config
+    - "Not Set" = HA default (10 days)
+    - Click **Edit** → enter days (1–365) → **Save** → writes back to `configuration.yaml` via ruamel.yaml round-trip (preserves `!include`/`!secret`)
+    - Click **⟳ Refresh** → re-reads from HA config
+  - **InfluxDB**: Retention Policies list
+    - Shows each RP: name, duration, shard group, replication, ★ default
+    - **Manage RPs** → create/alter/delete RPs with duration (e.g., `30d`, `7d`, `INF`), make default, set shard group/replication
+- **Scan Schedule** card: set global cron for deep scans
+
+### Overlap & Exclusion Generator
+- Click **Overlap** tab → check entities to exclude
+- **Copy YAML** → paste into HA's `configuration.yaml` under `recorder: exclude: entities:`
+
+### About
+- Click **About** in the sidebar → version, GitHub links, quick start, resources
+
+### API Endpoints (for automation)
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/databases/{name}/retention` | Get retention (HA: days, InfluxDB: RP list) |
+| POST | `/api/databases/{name}/retention` | Set retention (body varies by engine) |
+| POST | `/api/databases/{name}/retention/refresh` | Re-read from HA config |
+| GET | `/api/entities/{db_id}/{entity_id}/values?limit=100` | Entity state history (drill-down) |
+
+### Keyboard Shortcuts
+- `Esc` closes any open modal
+
+## Notes / limitations

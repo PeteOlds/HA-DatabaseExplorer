@@ -1,6 +1,13 @@
-// Resolve the API base from the current page path so the app works whether it is
-// opened directly or behind a Home Assistant ingress prefix (e.g. /api/hassio_ingress/TOKEN/).
-const BASE = location.pathname.replace(/\/[^/]*$/, "") + "/";
+// Resolve the API base: use /api/ under HA ingress, else relative path
+const BASE = (() => {
+  const path = location.pathname;
+  if (path.includes("/api/hassio_ingress/")) {
+    return "/api/";
+  }
+  return path.replace(/\/[^/]*$/, "") + "/";
+})();
+
+const VERSION = "0.3.5"; // INJECTED_AT_BUILD - update on release
 
 function fmtMB(mb) {
   return mb != null && mb !== "" ? Math.round(mb).toLocaleString() + " MB" : "Unknown";
@@ -44,6 +51,7 @@ function router() {
     dashboard: renderDashboard,
     entities: renderEntities,
     overlap: renderOverlap,
+    about: renderAbout,
   };
   (map[hash] || renderDashboard)();
 }
@@ -950,5 +958,36 @@ async function showEntityValues(dbId, entityId) {
   }
   
   await loadValues();
+}
+
+window.showEntityValues = showEntityValues;
+
+// About page
+async function renderAbout() {
+  view.innerHTML = "";
+  const card = el("div", { class: "card" });
+  
+  card.append(
+    el("h2", {}, "About HA Database Explorer"),
+    el("p", {}, `Version ${VERSION}`),
+    el("p", { class: "muted" }, "Audit storage, retention and cross-database entity overlap across your Home Assistant databases (SQLite, MariaDB/MySQL, InfluxDB 1.8). Privacy-first, local-only."),
+    el("hr", {}),
+    el("h3", {}, "Resources"),
+    el("ul", {}, `
+      <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer" target="_blank" rel="noopener">GitHub Repository</a></li>
+      <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer#usage" target="_blank" rel="noopener">Usage Instructions</a></li>
+      <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer/issues" target="_blank" rel="noopener">Report Issues</a></li>
+    `),
+    el("hr", {}),
+    el("h3", {}, "Quick Start"),
+    el("p", {}, "1. Open the <strong>Setup</strong> tab to configure your database connections"),
+    el("p", {}, "2. Click <strong>Discover databases</strong> to auto-detect HA Recorder + InfluxDB"),
+    el("p", {}, "3. Use <strong>Dashboard</strong> for overview, <strong>Entities</strong> for per-entity analysis"),
+    el("p", {}, "4. Click any <strong>entity_id</strong> in Entities tab to see recent state values"),
+    el("p", {}, "5. Use <strong>Retention</strong> column in Setup to manage purge policies"),
+    el("hr", {}),
+    el("p", { class: "muted" }, "Built for Home Assistant. Local-only, privacy-first.")
+  );
+  view.append(card);
 }
 router();
