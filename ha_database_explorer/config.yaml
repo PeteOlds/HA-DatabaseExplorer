@@ -1,5 +1,5 @@
 name: HA Database Explorer
-version: "0.3.6"
+version: "0.3.7"
 slug: ha_database_explorer
 description: >-
   Audit storage, retention and cross-database entity overlap across your Home Assistant
@@ -11,6 +11,7 @@ arch:
 init: false
 ingress: true
 ingress_port: 8099
+ingress_panel: true
 panel_icon: mdi:database-search
 panel_title: Database Explorer
 hassio_api: true
