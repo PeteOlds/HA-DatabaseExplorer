@@ -19,6 +19,13 @@ class SQLiteConnector(BaseConnector):
         self.path = Path(config.get("path", DEFAULT_PATH))
 
     async def test_connection(self) -> bool:
+        if self.path == ":memory:":
+            try:
+                async with aiosqlite.connect(self.path) as db:
+                    await db.execute("SELECT 1 FROM states_meta LIMIT 1")
+                return True
+            except Exception:
+                return False
         if not self.path.exists():
             return False
         try:

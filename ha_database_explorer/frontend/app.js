@@ -10,7 +10,7 @@ const BASE = (() => {
   return path.replace(/\/[^/]*$/, "") + "/";
 })();
 
-const VERSION = "0.3.7"; // INJECTED_AT_BUILD - update on release
+const VERSION = "0.3.9"; // INJECTED_AT_BUILD - update on release
 
 function fmtMB(mb) {
   return mb != null && mb !== "" ? Math.round(mb).toLocaleString() + " MB" : "Unknown";
@@ -346,7 +346,7 @@ async function manageInfluxRPs(connectionName) {
   // Header
   const header = el("div", { style: "display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding:12px 16px" });
   header.append(el("h3", {}, `Retention Policies — ${connectionName}`));
-  const closeBtn = el("button", { class: "action muted", onclick: () => modal.remove() }, "Close");
+  const closeBtn = el("button", { class: "action muted", onclick: (e) => { e.stopPropagation(); modal.remove(); } }, "Close");
   header.append(closeBtn);
   content.append(header);
   
@@ -367,7 +367,7 @@ async function manageInfluxRPs(connectionName) {
         <td style="padding:8px">${rp.replica_n || "—"}</td>
         <td style="padding:8px">${rp.default ? "★" : "—"}</td>
         <td style="padding:8px">
-          <button class="action small" onclick="editInfluxRP('${connectionName}', ${JSON.stringify(rp).replace(/"/g, '"')})">Edit</button>
+          <button class="action small" onclick="editInfluxRP('${connectionName}', '${JSON.stringify(rp).replace(/"/g, '\\"')}')">Edit</button>
           <button class="action small muted" onclick="deleteInfluxRP('${connectionName}', '${rp.name}')">Delete</button>
         </td>
       `;
@@ -584,10 +584,11 @@ async function renderEntities() {
   calc.onclick = async () => {
     result.textContent = "computing…";
     try {
+      const dbId = document.querySelector(".entity-link")?.getAttribute("data-db") || "";
       const r = await api("/api/tools/retention-advice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ retention_days: parseInt(days.value) || 30 }),
+        body: JSON.stringify({ retention_days: parseInt(days.value) || 30, db_id: dbId }),
       });
       result.textContent = `Keeping ${r.retention_days} days would free ~${fmtMB(r.total_freed_mb)} across ${r.entities.length} entities.`;
     } catch (e) {
@@ -870,7 +871,7 @@ async function showEntityValues(dbId, entityId) {
   // Header
   const header = el("div", { style: "display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding:12px 16px" });
   header.append(el("h3", {}, `Entity Values — ${entityId}`));
-  const closeBtn = el("button", { class: "action muted", onclick: () => modal.remove() }, "Close");
+  const closeBtn = el("button", { class: "action muted", onclick: (e) => { e.stopPropagation(); modal.remove(); } }, "Close");
   header.append(closeBtn);
   content.append(header);
   
@@ -989,7 +990,7 @@ async function renderAbout() {
     el("h3", {}, "Resources"),
     el("ul", {}, `
       <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer" target="_blank" rel="noopener">GitHub Repository</a></li>
-      <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer#usage" target="_blank" rel="noopener">Usage Instructions</a></li>
+      <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer#usage-guide" target="_blank" rel="noopener">Usage Instructions</a></li>
       <li><a href="https://github.com/PeteOlds/HA-DatabaseExplorer/issues" target="_blank" rel="noopener">Report Issues</a></li>
     `),
     el("hr", {}),

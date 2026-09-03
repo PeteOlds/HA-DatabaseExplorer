@@ -1,8 +1,11 @@
 FROM python:3.11-slim
 
+ARG VERSION=0.3.8
+
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    APP_DATA=/data
+    APP_DATA=/data \
+    VERSION=${VERSION}
 
 WORKDIR /app
 
