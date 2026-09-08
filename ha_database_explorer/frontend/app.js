@@ -702,8 +702,9 @@ async function renderOverlap() {
   rows.forEach((r) => {
     const label = el("label", { style: "display:block;margin-bottom:4px" });
     const cb = el("input", { type: "checkbox" });
+    const yamlId = r.exclude_entity_id || r.entity_id;
     cb.onchange = () => {
-      cb.checked ? selected.add(r.entity_id) : selected.delete(r.entity_id);
+      cb.checked ? selected.add(yamlId) : selected.delete(yamlId);
       updateYaml();
     };
     
@@ -711,7 +712,8 @@ async function renderOverlap() {
     // The overlap API already sorts by count, so present_in[0] is primary
     const sources = (r.present_in || []).map(dbId => {
       const name = dbNameMap[dbId] || dbId;
-      return name;
+      const native = r.native_ids && r.native_ids[dbId];
+      return native && native !== r.entity_id ? `${name} (${native})` : name;
     });
     
     const sourceSpans = sources.map((src, idx) => {
@@ -721,6 +723,9 @@ async function renderOverlap() {
     }).join(" → ");
     
     label.append(cb, ` ${r.entity_id} [${sourceSpans}] (redundant: ${r.total_redundant_records})`);
+    if (r.match_method && r.match_method !== "exact") {
+      label.append(el("span", { class: "muted", style: "margin-left:6px", title: "Matched by normalised object-ID (recorder dotted ID vs InfluxDB tag)" }, "≡ normalised"));
+    }
     left.append(label);
   });
 function updateYaml() {

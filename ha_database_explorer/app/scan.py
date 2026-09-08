@@ -145,21 +145,29 @@ async def run_scan(job_id: str) -> None:
 async def _build_overlap() -> None:
     index = await all_entity_index()
     rows = []
-    for entity_id, db_ids in index.items():
-        if len(db_ids) < 2:
+    for canonical, native_by_db in index.items():
+        if len(native_by_db) < 2:
             continue
-        present = sorted(db_ids)
+        present = sorted(native_by_db)
+        natives = sorted(set(native_by_db.values()))
+        # Display prefers the dotted (recorder-style) id; deterministic fallback.
+        dotted = sorted(n for n in natives if "." in n)
+        display = dotted[0] if dotted else natives[0]
+        method = "exact" if len(natives) == 1 else "normalised"
         # Sum record counts across every db except the one holding the fewest (the "primary").
         counts = {
-            d: (await _entity_count(entity_id, d)) for d in present
+            d: (await _entity_count(native_by_db[d], d)) for d in present
         }
         primary = min(present, key=lambda d: counts.get(d, 0))
         redundant = sum(counts[d] for d in present if d != primary)
         rows.append(
             {
-                "entity_id": entity_id,
+                "entity_id": display,
                 "present_in": present,
                 "total_redundant_records": redundant,
+                "native_ids": native_by_db,
+                "match_method": method,
+                "exclude_entity_id": display,
             }
         )
     await replace_overlap(rows)

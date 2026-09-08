@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS entity_metrics (
 CREATE TABLE IF NOT EXISTS overlap_matrix (
     entity_id TEXT PRIMARY KEY,
     present_in TEXT NOT NULL,
-    total_redundant_records INTEGER NOT NULL
+    total_redundant_records INTEGER NOT NULL,
+    native_ids TEXT,
+    match_method TEXT,
+    exclude_entity_id TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -79,6 +82,16 @@ async def init_cache() -> None:
         columns = [row[1] for row in await cur.fetchall()]
         if "end_date" not in columns:
             await db.execute("ALTER TABLE entity_metrics ADD COLUMN end_date TEXT")
+        # Migration: overlap native-id columns for normalised cross-engine
+        # matching (added in 0.3.10). entity_id stays the display id.
+        cur = await db.execute("PRAGMA table_info(overlap_matrix)")
+        columns = [row[1] for row in await cur.fetchall()]
+        if "native_ids" not in columns:
+            await db.execute("ALTER TABLE overlap_matrix ADD COLUMN native_ids TEXT")
+        if "match_method" not in columns:
+            await db.execute("ALTER TABLE overlap_matrix ADD COLUMN match_method TEXT")
+        if "exclude_entity_id" not in columns:
+            await db.execute("ALTER TABLE overlap_matrix ADD COLUMN exclude_entity_id TEXT")
         await db.commit()
     # Heal any historical duplicate rows left by the old uuid4-based upsert.
     await _dedupe_cache()
@@ -212,10 +225,14 @@ async def replace_overlap(rows: list[dict]) -> None:
                 r["entity_id"],
                 json.dumps(r["present_in"]),
                 r["total_redundant_records"],
+                json.dumps(r.get("native_ids", {})),
+                r.get("match_method", "exact"),
+                r.get("exclude_entity_id", r["entity_id"]),
             )
             await db.execute(
                 "INSERT OR REPLACE INTO overlap_matrix "
-                "(entity_id, present_in, total_redundant_records) VALUES (?,?,?)",
+                "(entity_id, present_in, total_redundant_records, "
+                "native_ids, match_method, exclude_entity_id) VALUES (?,?,?,?,?,?)",
                 params,
             )
         await db.commit()
@@ -284,15 +301,35 @@ async def get_overlap() -> list[dict]:
         rows = [dict(row) for row in await cur.fetchall()]
     for r in rows:
         r["present_in"] = json.loads(r["present_in"])
+        try:
+            r["native_ids"] = json.loads(r.get("native_ids") or "{}")
+        except Exception:
+            r["native_ids"] = {}
+        r["match_method"] = r.get("match_method") or "exact"
+        r["exclude_entity_id"] = r.get("exclude_entity_id") or r["entity_id"]
     return rows
 
 
-async def all_entity_index() -> dict[str, set[str]]:
-    """entity_id -> set of db_ids, used to build the overlap matrix."""
-    out: dict[str, set[str]] = {}
+def canonical_entity_id(entity_id: str) -> str:
+    """Canonical form for cross-engine overlap matching.
+
+    The HA recorder stores dotted ids (``sensor.foo``) while the InfluxDB
+    integration writes the ``entity_id`` tag as the object id only (``foo``).
+    Stripping the domain makes the two joinable; ids without a dot pass
+    through unchanged.
+    """
+    if "." in entity_id:
+        return entity_id.split(".", 1)[1]
+    return entity_id
+
+
+async def all_entity_index() -> dict[str, dict[str, str]]:
+    """Canonical entity id -> {db_id: native entity id}, used to build overlap."""
+    out: dict[str, dict[str, str]] = {}
     async with aiosqlite.connect(CACHE_DB) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT db_id, entity_id FROM entity_metrics")
         for row in await cur.fetchall():
-            out.setdefault(row["entity_id"], set()).add(row["db_id"])
+            key = canonical_entity_id(row["entity_id"])
+            out.setdefault(key, {})[row["db_id"]] = row["entity_id"]
     return out
