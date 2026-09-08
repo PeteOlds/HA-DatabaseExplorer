@@ -722,7 +722,9 @@ async function renderOverlap() {
       return `<span title="${src}${isPrimary ? ' (primary — fewest records)' : ''}">${src}${star}</span>`;
     }).join(" → ");
     
-    label.append(cb, ` ${r.entity_id} [${sourceSpans}] (redundant: ${r.total_redundant_records})`);
+    const labelText = el("span");
+    labelText.innerHTML = ` ${r.entity_id} [${sourceSpans}] (redundant: ${r.total_redundant_records})`;
+    label.append(cb, labelText);
     if (r.match_method && r.match_method !== "exact") {
       label.append(el("span", { class: "muted", style: "margin-left:6px", title: "Matched by normalised object-ID (recorder dotted ID vs InfluxDB tag)" }, "≡ normalised"));
     }
