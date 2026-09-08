@@ -602,6 +602,14 @@ async function renderEntities() {
   card.append(advisor);
   const table = el("table");
   table.innerHTML =
+    "<colgroup>" +
+    "<col style='width:36%'/>" +
+    "<col style='width:12%'/>" +
+    "<col style='width:14%'/>" +
+    "<col style='width:14%'/>" +
+    "<col style='width:12%'/>" +
+    "<col style='width:12%'/>" +
+    "</colgroup>" +
     "<thead><tr>" +
     "<th data-sort='entity_id'>entity_id ▲</th>" +
     "<th data-sort='record_count'>records ▼</th>" +
@@ -625,7 +633,7 @@ async function renderEntities() {
           el(
             "tr",
             {},
-            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}">${r.entity_id}</a></td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
+            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a></td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
           )
         )
       );
