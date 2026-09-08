@@ -28,7 +28,10 @@ async function api(path, opts) {
 
 function el(tag, attrs = {}, html = "") {
   const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (typeof v === "function") n[k] = v;
+    else n.setAttribute(k, v);
+  }
   if (html) n.innerHTML = html;
   return n;
 }
@@ -789,6 +792,14 @@ async function refreshRetention(connectionName) {
 
 // InfluxDB RP Edit/Delete (called from modal)
 async function editInfluxRP(connectionName, rp) {
+  // rp may arrive as a JSON string from the inline onclick handler
+  if (typeof rp === "string") {
+    try {
+      rp = JSON.parse(rp);
+    } catch {
+      return alert("Could not parse retention policy data");
+    }
+  }
   // Pre-fill the form in the modal
   const nameInput = document.querySelector("input[placeholder='RP name (e.g., autogen)']");
   const durationInput = document.querySelector("input[placeholder='Duration (e.g., 30d, 7d, INF)']");

@@ -593,6 +593,8 @@ async def retention_advice(req: RetentionRequest):
         if start:
             try:
                 dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                if dt is not None and dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
             except Exception:
                 dt = None
         else:
