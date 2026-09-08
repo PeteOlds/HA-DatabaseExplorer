@@ -698,37 +698,66 @@ async function renderOverlap() {
   // Build db_id -> connection_name map
   const dbNameMap = {};
   databases.forEach(d => { dbNameMap[d.id] = d.connection_name; });
-  
+
+  const oTable = el("table", { class: "ovlp" });
+  oTable.innerHTML =
+    "<colgroup>" +
+    "<col style='width:4%'/>" +
+    "<col style='width:30%'/>" +
+    "<col style='width:38%'/>" +
+    "<col style='width:12%'/>" +
+    "<col style='width:16%'/>" +
+    "</colgroup>" +
+    "<thead><tr><th></th><th>Entity</th><th>Stored in</th><th style='text-align:right'>Redundant</th><th>Match</th></tr></thead>";
+  const oBody = el("tbody");
+  oTable.append(oBody);
+  left.append(oTable);
+
   rows.forEach((r) => {
-    const label = el("label", { style: "display:block;margin-bottom:4px" });
-    const cb = el("input", { type: "checkbox" });
+    const tr = el("tr");
     const yamlId = r.exclude_entity_id || r.entity_id;
+
+    const cbTd = el("td");
+    const cb = el("input", { type: "checkbox" });
     cb.onchange = () => {
       cb.checked ? selected.add(yamlId) : selected.delete(yamlId);
       updateYaml();
     };
-    
-    // Determine primary DB (fewest records = first in present_in after sorting by count)
-    // The overlap API already sorts by count, so present_in[0] is primary
-    const sources = (r.present_in || []).map(dbId => {
+    cbTd.append(cb);
+
+    // Entity cell: monospace id, native forms on hover
+    const natives = r.native_ids ? [...new Set(Object.values(r.native_ids))] : [];
+    const nativeTip = natives.filter(n => n !== r.entity_id).join(", ");
+    const entTd = el("td");
+    entTd.innerHTML = `<code title="${nativeTip ? `Also stored as: ${nativeTip}` : r.entity_id}">${r.entity_id}</code>`;
+
+    // Sources cell: one chip-like line per DB, native name as sub-caption
+    const srcTd = el("td");
+    (r.present_in || []).forEach((dbId, idx) => {
       const name = dbNameMap[dbId] || dbId;
       const native = r.native_ids && r.native_ids[dbId];
-      return native && native !== r.entity_id ? `${name} (${native})` : name;
-    });
-    
-    const sourceSpans = sources.map((src, idx) => {
       const isPrimary = idx === 0;
-      const star = isPrimary ? " <span style='color:#fbbf24'>★</span>" : "";
-      return `<span title="${src}${isPrimary ? ' (primary — fewest records)' : ''}">${src}${star}</span>`;
-    }).join(" → ");
-    
-    const labelText = el("span");
-    labelText.innerHTML = ` ${r.entity_id} [${sourceSpans}] (redundant: ${r.total_redundant_records})`;
-    label.append(cb, labelText);
+      const line = el("div", { title: `${name}${isPrimary ? " (primary — fewest records)" : ""}` });
+      line.innerHTML =
+        `${name}${isPrimary ? " <span style='color:#fbbf24'>★</span>" : ""}` +
+        (native && native !== r.entity_id ? `<br><small class="muted">${native}</small>` : "");
+      srcTd.append(line);
+    });
+
+    const redTd = el("td", { style: "text-align:right;font-variant-numeric:tabular-nums" });
+    redTd.textContent = r.total_redundant_records != null
+      ? Number(r.total_redundant_records).toLocaleString()
+      : "—";
+
+    const matchTd = el("td");
     if (r.match_method && r.match_method !== "exact") {
-      label.append(el("span", { class: "muted", style: "margin-left:6px", title: "Matched by normalised object-ID (recorder dotted ID vs InfluxDB tag)" }, "≡ normalised"));
+      matchTd.innerHTML = `<span class="pill" title="Matched by normalised object-ID (recorder dotted ID vs InfluxDB tag)">≡ normalised</span>`;
+    } else {
+      matchTd.innerHTML = `<span class="muted">exact</span>`;
     }
-    left.append(label);
+
+    tr.append(cbTd, entTd, srcTd, redTd, matchTd);
+    oBody.append(tr);
   });
 function updateYaml() {
     const ids = [...selected];

@@ -108,6 +108,17 @@ button.action {
 .modal table { font-size: 13px; }
 .load-more-btn { margin-top: 12px; width: 100%; }
 
+/* Overlap table: structured rows instead of one dense line per entity */
+.ovlp td { vertical-align: top; }
+.ovlp code { font-size: 12.5px; }
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
 /* Fix table layout for Retention column visibility */
 #view table {
   width: 100%;
