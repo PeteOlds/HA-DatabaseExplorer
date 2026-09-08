@@ -688,7 +688,11 @@ async function renderOverlap() {
   }
   const card = el("div", { class: "card" });
   card.append(el("h3", {}, "Overlap Matrix & Exclusion Generator"));
-  const split = el("div", { class: "split" });
+  card.append(el("p", { class: "muted" },
+    "Entities stored in more than one database. ★ marks the primary copy (fewest records); " +
+    "Redundant counts the extra copies. ≡ normalised means the match was made on the object-ID " +
+    "(recorder sensor.X vs InfluxDB tag X). Tick entities to build a recorder: exclude: list on the right."));
+  const split = el("div", { class: "split split-wide" });
   const left = el("div");
   const right = el("div");
   const selected = new Set();

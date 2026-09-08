@@ -45,6 +45,14 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { cursor: pointer; user-select: none; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Overlap view: table gets the room, YAML generator takes a narrow rail */
+.split.split-wide { grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); }
+/* Let long entity IDs and match badges wrap instead of truncating */
+#view .ovlp td:nth-child(2), #view .ovlp td:nth-child(5) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
 code.block {
   display: block;
   background: #263238;
