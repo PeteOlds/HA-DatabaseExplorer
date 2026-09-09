@@ -1077,7 +1077,19 @@ window.showEntityValues = showEntityValues;
 
 // InfluxDB Measurements page
 async function renderInfluxDB() {
-  view.innerHTML = "<div class='card'><p class='muted'>Loading measurements…</p></div>";
+  view.innerHTML = "";
+  const waitCard = el("div", { class: "card" });
+  const waitStatus = el("p", { class: "muted" }, "Scanning measurements… 0s");
+  waitCard.append(
+    el("h3", {}, "Loading InfluxDB measurements"),
+    el("p", { class: "muted" }, "Checking recency across every measurement — this can take half a minute on large databases. You can leave this tab open; the table appears when ready."),
+    waitStatus
+  );
+  view.append(waitCard);
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    waitStatus.textContent = `Scanning measurements… ${Math.round((Date.now() - t0) / 1000)}s`;
+  }, 1000);
   try {
     const resp = await api("/api/tools/influxdb-measurements");
     const measurements = resp.measurements || [];
@@ -1219,6 +1231,8 @@ async function renderInfluxDB() {
     view.append(tableCard);
   } catch (e) {
     view.innerHTML = `<div class="card"><p class="muted">Error loading measurements: ${e.message}</p></div>`;
+  } finally {
+    clearInterval(tick);
   }
 }
 async function renderAbout() {
