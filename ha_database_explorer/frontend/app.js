@@ -1112,10 +1112,10 @@ async function renderInfluxDB() {
         "Drop is offered on legacy rows only; dropping a shared measurement would delete every entity in it. " +
         "Consider dropping stale legacy measurements to reclaim space.")
     );
+    view.append(card);
     
     if (!measurements.length) {
       card.append(el("p", { class: "muted" }, "No measurements found."));
-      view.append(card);
       return;
     }
     
