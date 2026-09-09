@@ -1149,7 +1149,7 @@ async function renderInfluxDB() {
       "<col style='width:16%'/>" +
       "</colgroup>" +
       "<thead><tr>" +
-      "<th>⚠</th>" +
+      "<th title='Legacy pre-default_measurement measurement — stale data candidate'>Legacy</th>" +
       "<th data-sort='name'>Measurement</th>" +
       "<th data-sort='last_point'>Last Point</th>" +
       "<th data-sort='point_count'>Points</th>" +
