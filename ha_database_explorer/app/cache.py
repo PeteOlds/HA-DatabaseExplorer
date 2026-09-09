@@ -47,6 +47,18 @@ CREATE TABLE IF NOT EXISTS overlap_matrix (
     match_method TEXT,
     exclude_entity_id TEXT
 );
+CREATE TABLE IF NOT EXISTS entity_usage (
+    entity_id TEXT PRIMARY KEY,
+    refs_json TEXT NOT NULL,
+    total_refs INTEGER NOT NULL,
+    verdict TEXT NOT NULL,
+    recorded_in_json TEXT,
+    has_lts INTEGER,
+    excluded INTEGER,
+    orphan INTEGER,
+    last_seen TEXT,
+    scanned_at TEXT
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -292,6 +304,51 @@ async def get_entity_metrics(
             sql += f" ORDER BY {sort} {'DESC' if order == 'desc' else 'ASC'}"
         cur = await db.execute(sql, params)
         return [dict(row) for row in await cur.fetchall()]
+
+
+async def replace_usage(rows: list[dict], dangling: list[dict]) -> None:
+    async with aiosqlite.connect(CACHE_DB) as db:
+        await db.execute("DELETE FROM entity_usage")
+        for r in rows + dangling:
+            await db.execute(
+                "INSERT OR REPLACE INTO entity_usage "
+                "(entity_id, refs_json, total_refs, verdict, recorded_in_json, "
+                "has_lts, excluded, orphan, last_seen, scanned_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    r["entity_id"],
+                    json.dumps(r.get("refs", {})),
+                    r.get("total_refs", 0),
+                    r.get("verdict", "unknown"),
+                    json.dumps(r.get("recorded_in", [])),
+                    1 if r.get("has_lts") else 0,
+                    1 if r.get("excluded") else 0,
+                    None if r.get("orphan") is None else (1 if r.get("orphan") else 0),
+                    r.get("last_seen"),
+                    _now(),
+                ),
+            )
+        await db.commit()
+
+
+async def get_usage() -> list[dict]:
+    async with aiosqlite.connect(CACHE_DB) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM entity_usage")
+        rows = [dict(row) for row in await cur.fetchall()]
+    for r in rows:
+        try:
+            r["refs"] = json.loads(r.get("refs_json") or "{}")
+        except Exception:
+            r["refs"] = {}
+        try:
+            r["recorded_in"] = json.loads(r.get("recorded_in_json") or "[]")
+        except Exception:
+            r["recorded_in"] = []
+        r["has_lts"] = bool(r.get("has_lts"))
+        r["excluded"] = bool(r.get("excluded"))
+        r["orphan"] = None if r.get("orphan") is None else bool(r.get("orphan"))
+    return rows
 
 
 async def get_overlap() -> list[dict]:

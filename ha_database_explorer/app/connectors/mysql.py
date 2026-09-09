@@ -45,6 +45,25 @@ class MySQLConnector(BaseConnector):
             pool.close()
             await pool.wait_closed()
 
+    async def statistic_ids(self) -> list[str]:
+        """Statistic IDs with long-term statistics (statistics_meta)."""
+        try:
+            pool = await aiomysql.create_pool(**self._pool_args())
+        except Exception:
+            return []
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+                    await cur.execute("SELECT statistic_id FROM statistics_meta")
+                    rows = await cur.fetchall()
+            return [r[0] for r in rows if r and r[0]]
+        except Exception:
+            return []
+        finally:
+            pool.close()
+            await pool.wait_closed()
+
     async def total_size_mb(self) -> float | None:
         try:
             pool = await aiomysql.create_pool(**self._pool_args())

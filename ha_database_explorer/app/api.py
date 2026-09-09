@@ -18,6 +18,7 @@ from .cache import (
     get_databases,
     get_domain_metrics,
     get_entity_metrics,
+    get_meta,
     get_overlap,
     init_cache,
     upsert_database,
@@ -534,6 +535,37 @@ async def usage_orphans():
             )
     out.sort(key=lambda o: o["last_seen"] or "")
     return {"live": True, "live_count": len(live), "orphans": out}
+
+
+@app.get("/api/metrics/usage")
+async def metrics_usage():
+    from .cache import get_usage
+
+    rows = await get_usage()
+    by_verdict: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for r in rows:
+        by_verdict[r.get("verdict", "unknown")] = by_verdict.get(r.get("verdict", "unknown"), 0) + 1
+        for t, entries in (r.get("refs") or {}).items():
+            by_type[t] = by_type.get(t, 0) + sum(e.get("count", 0) for e in entries)
+    scanned = await get_meta("usage_scanned_at")
+    return {"rows": rows, "by_verdict": by_verdict, "by_type": by_type, "scanned_at": scanned}
+
+
+@app.post("/api/usage/rescan")
+async def usage_rescan():
+    from .cache import set_meta
+    from .usage import run_full_usage_scan
+
+    result = await run_full_usage_scan()
+    await set_meta("usage_scanned_at", _usage_now())
+    return {"counts": result["counts"], "surfaces": result["surfaces"]}
+
+
+def _usage_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 @app.get("/api/entities/{db_id}/{entity_id}/values")

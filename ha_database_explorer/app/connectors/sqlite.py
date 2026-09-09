@@ -35,6 +35,18 @@ class SQLiteConnector(BaseConnector):
         except Exception:
             return False
 
+    async def statistic_ids(self) -> list[str]:
+        """Statistic IDs with long-term statistics (statistics_meta)."""
+        if self.path != ":memory:" and not self.path.exists():
+            return []
+        try:
+            async with aiosqlite.connect(self.path) as db:
+                cur = await db.execute("SELECT statistic_id FROM statistics_meta")
+                rows = await cur.fetchall()
+            return [r[0] for r in rows if r and r[0]]
+        except Exception:
+            return []
+
     async def total_size_mb(self) -> float | None:
         if not self.path.exists():
             return None

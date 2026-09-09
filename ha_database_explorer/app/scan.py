@@ -108,6 +108,14 @@ async def run_scan(job_id: str) -> None:
             await _broadcast(job_id)
 
         await _build_overlap()
+        # Usage scan is filesystem-only and fast; never let it break a deep scan.
+        try:
+            from .usage import run_full_usage_scan
+
+            await run_full_usage_scan()
+            await set_meta("usage_scanned_at", _now())
+        except Exception:
+            pass
         duration_s = round(time.monotonic() - start_ts, 1)
         finished = _now()
         JOBS[job_id].update(

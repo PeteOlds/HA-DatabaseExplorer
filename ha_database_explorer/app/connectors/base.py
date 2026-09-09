@@ -36,10 +36,13 @@ class BaseConnector(ABC):
     @abstractmethod
     async def total_size_mb(self) -> float | None:
         """Disk footprint. Return None when not obtainable via this backend's API."""
-
     @abstractmethod
     async def entity_metrics(self) -> list[EntityMetric]:
         ...
+
+    async def statistic_ids(self) -> list[str]:
+        """Statistic IDs with long-term statistics (recorder backends)."""
+        return []
 
     async def domain_metrics(self, entities: list[EntityMetric]) -> list[DomainMetric]:
         """Default aggregation: group entities by HA domain and sum records."""
