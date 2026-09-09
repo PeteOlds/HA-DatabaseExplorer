@@ -1105,9 +1105,11 @@ async function renderInfluxDB() {
     
     card.append(
       el("h2", {}, "InfluxDB Measurements"),
-      el("p", { class: "muted" }, 
-        "Measurements in the InfluxDB database. Legacy measurements (dotted names like 'automation.*', 'binary_sensor.*') " +
-        "pre-date the 'default_measurement' setting and may contain stale data. " +
+      el("p", { class: "muted" },
+        "Measurements in the InfluxDB database. Dotted names (e.g. media_player.chrome) are legacy single-entity " +
+        "measurements from before the default_measurement setting — the name is the entity. Shared measurements " +
+        "(state, %, MB…) hold many entities, listed under each name with their entity_id tags. " +
+        "Drop is offered on legacy rows only; dropping a shared measurement would delete every entity in it. " +
         "Consider dropping stale legacy measurements to reclaim space.")
     );
     
@@ -1187,9 +1189,19 @@ async function renderInfluxDB() {
       }
       tr.append(warnTd);
       
-      // Name
+      // Name + which entities live here
       const nameTd = el("td");
-      nameTd.innerHTML = `<code>${m.name}</code>`;
+      const entCount = m.entity_count || 0;
+      const sample = (m.entities_sample || []).join(", ");
+      let sub;
+      if (m.is_legacy) {
+        sub = `entity: ${m.name}`;
+      } else if (entCount > 0) {
+        sub = `${entCount} ${entCount === 1 ? "entity" : "entities"}${sample ? `: ${sample}${entCount > m.entities_sample.length ? "…" : ""}` : ""}`;
+      } else {
+        sub = "entity tags unavailable";
+      }
+      nameTd.innerHTML = `<code>${m.name}</code><br><small class="muted" title="${sub}">${sub}</small>`;
       tr.append(nameTd);
       
       // Last point
@@ -1215,7 +1227,9 @@ async function renderInfluxDB() {
       sizeTd.textContent = fmtMB(m.estimated_size_bytes);
       tr.append(sizeTd);
       
-      // Actions
+      // Actions: drops only offered on legacy single-entity measurements.
+      // Shared measurements (state, %, MB…) hold many entities — dropping one
+      // would delete them all, so no Drop button by design.
       const actionTd = el("td");
       if (m.is_legacy) {
         const dropBtn = el("button", { 
@@ -1238,6 +1252,8 @@ async function renderInfluxDB() {
           }
         };
         actionTd.append(dropBtn);
+      } else {
+        actionTd.innerHTML = '<span class="muted" title="Shared measurement holding many entities — drop individual series instead">—</span>';
       }
       tr.append(actionTd);
       

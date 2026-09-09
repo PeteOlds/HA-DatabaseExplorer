@@ -205,16 +205,17 @@ class InfluxDBConnector(BaseConnector):
 
     async def get_measurement_recency(self) -> list[dict]:
         """Get recency info for all measurements in the database.
-        
-        Returns list of dicts with: name, last_point (ISO timestamp), 
-        point_count, estimated_size_bytes, is_legacy (bool).
+
+        Returns list of dicts with: name, last_point (ISO timestamp),
+        point_count, estimated_size_bytes, is_legacy (bool),
+        entity_count (distinct entity_id tags), entities_sample (list).
         """
         try:
             # Get all measurements
             meas_rows = await self._query('SHOW MEASUREMENTS')
             if not meas_rows:
                 return []
-            
+
             measurement_names = [row[0] for row in meas_rows if row]
 
             sem = asyncio.Semaphore(CONCURRENCY)
@@ -222,23 +223,42 @@ class InfluxDBConnector(BaseConnector):
             async def _one(name: str) -> dict | None:
                 async with sem:
                     try:
-                        # Get last point and count for this measurement
-                        # First check if it's a legacy dotted-name measurement
+                        # Legacy dotted-name measurements pre-date default_measurement
                         is_legacy = '.' in name and not name.startswith('_')
+                        qname = name.replace("\\", "\\\\").replace('"', '\\"')
 
-                        # Query last point time
-                        last_query = f'SELECT last(*) FROM "{name}"'
-                        last_rows = await self._query(last_query)
+                        # Newest point time. NOTE: SELECT last(*) returns the
+                        # epoch on some measurements, so read time from an
+                        # actual point instead.
                         last_point = None
-                        if last_rows and last_rows[0]:
-                            last_point = last_rows[0][0]  # time is first column
+                        try:
+                            newest = await self._query(
+                                f'SELECT * FROM "{qname}" ORDER BY time DESC LIMIT 1'
+                            )
+                            if newest and newest[0]:
+                                last_point = newest[0][0]
+                        except Exception:
+                            pass
 
                         # Query point count
-                        count_query = f'SELECT count(*) FROM "{name}"'
+                        count_query = f'SELECT count(*) FROM "{qname}"'
                         count_rows = await self._query(count_query)
                         point_count = 0
                         if count_rows and count_rows[0] and len(count_rows[0]) > 1:
                             point_count = int(count_rows[0][1])
+
+                        # Which entities live here (entity_id tag values)
+                        entity_count = 0
+                        entities_sample: list[str] = []
+                        try:
+                            tag_rows = await self._query(
+                                f'SHOW TAG VALUES FROM "{qname}" WITH KEY = "entity_id"'
+                            )
+                            tags = sorted({row[-1] for row in tag_rows if row and row[-1]})
+                            entity_count = len(tags)
+                            entities_sample = tags[:5]
+                        except Exception:
+                            pass
 
                         # Estimate size (rough: points * 50 bytes for typical point)
                         estimated_size = point_count * 50
@@ -249,6 +269,8 @@ class InfluxDBConnector(BaseConnector):
                             "point_count": point_count,
                             "estimated_size_bytes": estimated_size,
                             "is_legacy": is_legacy,
+                            "entity_count": entity_count,
+                            "entities_sample": entities_sample,
                         }
                     except Exception:
                         # If query fails for this measurement, skip it
