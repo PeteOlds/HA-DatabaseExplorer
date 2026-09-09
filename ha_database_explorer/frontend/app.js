@@ -567,9 +567,10 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : "—"; }
 
 async function renderEntities() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
-  const [rows, overlapRows] = await Promise.all([
+  const [rows, overlapRows, orphanData] = await Promise.all([
     api("/api/metrics/entities?sort=record_count&order=desc"),
     api("/api/metrics/overlap").catch(() => []),
+    api("/api/usage/orphans").catch(() => ({ live: false, orphans: [] })),
   ]);
   // Every id form that appears in the overlap matrix (display, exclude, natives)
   const dupIds = new Set();
@@ -577,6 +578,11 @@ async function renderEntities() {
     dupIds.add(o.entity_id);
     if (o.exclude_entity_id) dupIds.add(o.exclude_entity_id);
     Object.values(o.native_ids || {}).forEach(n => dupIds.add(n));
+  });
+  // Orphans: in DB but absent from live HA states (only when live list reachable)
+  const orphanSeen = new Map();
+  ((orphanData && orphanData.orphans) || []).forEach(o => {
+    if (!orphanSeen.has(o.entity_id)) orphanSeen.set(o.entity_id, o.last_seen);
   });
   view.innerHTML = "";
   if (!rows.length) {
@@ -593,7 +599,14 @@ async function renderEntities() {
   sourceFilter.append(el("option", { value: "" }, "All sources"));
   sources.forEach(s => sourceFilter.append(el("option", { value: s }, s)));
   headerRow.append(sourceFilter);
+  const orphansOnlyBox = el("input", { type: "checkbox", id: "orphans-only" });
+  const orphansOnlyLabel = el("label", { for: "orphans-only", style: "display:flex;align-items:center;gap:4px" }, "Orphans only");
+  orphansOnlyLabel.prepend(orphansOnlyBox);
+  headerRow.append(orphansOnlyLabel);
   card.append(headerRow);
+  if (!orphanData || !orphanData.live) {
+    card.append(el("p", { class: "muted" }, "Live HA states unreachable — orphan detection off."));
+  }
 
   const advisor = el("div", { class: "card" }, "<h4>Purge / Retention Advisor</h4>");
   const days = el("input", { type: "number", value: "30", style: "width:80px;padding:6px" });
@@ -641,14 +654,14 @@ async function renderEntities() {
   const draw = (q) => {
     tbody.innerHTML = "";
     rows
-      .filter((r) => (!q || r.entity_id.includes(q)) && (!currentSourceFilter || r.connection_name === currentSourceFilter))
+      .filter((r) => (!q || r.entity_id.includes(q)) && (!currentSourceFilter || r.connection_name === currentSourceFilter) && (!orphansOnlyBox.checked || orphanSeen.has(r.entity_id)))
       .slice(0, 500)
       .forEach((r) =>
         tbody.append(
           el(
             "tr",
             {},
-            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a>${dupIds.has(r.entity_id) ? ` <a href="#overlap" class="muted" title="Duplicated across databases — open Overlap tab">≡ dup</a>` : ""}</td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
+            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a>${dupIds.has(r.entity_id) ? ` <a href="#overlap" class="muted" title="Duplicated across databases — open Overlap tab">≡ dup</a>` : ""}${orphanSeen.has(r.entity_id) ? ` <span class="pill" title="Not present in live HA states${orphanSeen.get(r.entity_id) ? ` — last seen ${fmtDate(orphanSeen.get(r.entity_id))}` : ""}">orphan</span>` : ""}</td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
           )
         )
       );
@@ -684,6 +697,7 @@ async function renderEntities() {
     currentSourceFilter = sourceFilter.value;
     draw(search.value);
   };
+  orphansOnlyBox.onchange = () => draw(search.value);
   search.oninput = () => draw(search.value);
   if (pendingEntitySearch) {
     search.value = pendingEntitySearch;

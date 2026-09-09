@@ -15,7 +15,7 @@ ingress_panel: true
 panel_icon: mdi:database-search
 panel_title: Database Explorer
 hassio_api: true
-homeassistant_api: false
+homeassistant_api: true
 # Privileged mode is REQUIRED for Docker-socket auto-detection of database containers.
 protection_mode: false
 privileged:

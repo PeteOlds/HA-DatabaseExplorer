@@ -503,6 +503,35 @@ async def metrics_overlap():
     return await get_overlap()
 
 
+@app.get("/api/usage/orphans")
+async def usage_orphans():
+    """Entities present in the cache but absent from live HA states.
+
+    Fail-open contract: when live states are unreachable (no Supervisor
+    token yet, timeout, bad payload) the response is ``live: False`` with an
+    empty list — callers must not treat that as evidence of orphans.
+    """
+    from .ha_api import get_live_entity_ids
+
+    live = await get_live_entity_ids()
+    if live is None:
+        return {"live": False, "live_count": 0, "orphans": []}
+    out = []
+    for e in await get_entity_metrics():
+        if e["entity_id"] not in live:
+            out.append(
+                {
+                    "entity_id": e["entity_id"],
+                    "db_id": e.get("db_id"),
+                    "connection_name": e.get("connection_name"),
+                    "record_count": e["record_count"],
+                    "last_seen": e.get("end_date"),
+                }
+            )
+    out.sort(key=lambda o: o["last_seen"] or "")
+    return {"live": True, "live_count": len(live), "orphans": out}
+
+
 @app.get("/api/entities/{db_id}/{entity_id}/values")
 async def get_entity_values(db_id: str, entity_id: str, limit: int = 100, offset: int = 0):
     """Get recent state values for a specific entity from a specific database."""
