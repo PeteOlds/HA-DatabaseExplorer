@@ -1373,6 +1373,11 @@ async function renderUsage() {
   const verdictFilter = el("select", { style: "padding:8px;min-width:160px" });
   [["", "All verdicts"], ["used", "Used"], ["unused", "Unused"], ["orphan", "Orphaned"], ["dangling", "Dangling refs"]].forEach(([v, label]) => verdictFilter.append(el("option", { value: v }, label)));
   headerRow.append(verdictFilter);
+  const objTypes = [...new Set(rows.flatMap(r => Object.keys(r.refs || {})))].sort();
+  const objFilter = el("select", { style: "padding:8px;min-width:160px", title: "Show only entities referenced by this object type" });
+  objFilter.append(el("option", { value: "" }, "All object types"));
+  objTypes.forEach(t => objFilter.append(el("option", { value: t }, t)));
+  headerRow.append(objFilter);
   const rescan = el("button", { class: "action" }, "Rescan usage");
   const rescanStatus = el("span", { class: "muted" });
   rescan.onclick = async () => {
@@ -1439,10 +1444,11 @@ async function renderUsage() {
   let currentSort = "total_refs";
   let currentOrder = "desc";
   let currentVerdict = "";
+  let currentObjType = "";
   const draw = (q) => {
     tbody.innerHTML = "";
     [...rows]
-      .filter((r) => (!q || r.entity_id.includes(q)) && (!currentVerdict || r.verdict === currentVerdict))
+      .filter((r) => (!q || r.entity_id.includes(q)) && (!currentVerdict || r.verdict === currentVerdict) && (!currentObjType || (r.refs && r.refs[currentObjType])))
       .sort((a, b) => {
         const av = a[currentSort];
         const bv = b[currentSort];
@@ -1493,6 +1499,10 @@ async function renderUsage() {
   });
   verdictFilter.onchange = () => {
     currentVerdict = verdictFilter.value;
+    draw(search.value);
+  };
+  objFilter.onchange = () => {
+    currentObjType = objFilter.value;
     draw(search.value);
   };
   search.oninput = () => draw(search.value);
