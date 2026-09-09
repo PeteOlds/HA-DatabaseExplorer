@@ -22,6 +22,7 @@ const view = $("#view");
 // Cross-tab navigation: links set pendingEntitySearch, then navigate via
 // location.hash so the router renders the target tab and consumes it.
 let pendingEntitySearch = "";
+let pendingUsageFilter = "";
 
 async function api(path, opts) {
   const url = BASE + String(path).replace(/^\//, "");
@@ -62,6 +63,7 @@ function router() {
     entities: renderEntities,
     overlap: renderOverlap,
     influxdb: renderInfluxDB,
+    usage: renderUsage,
     about: renderAbout,
   };
   (map[hash] || renderDashboard)();
@@ -567,11 +569,15 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : "—"; }
 
 async function renderEntities() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
-  const [rows, overlapRows, orphanData] = await Promise.all([
+  const [rows, overlapRows, orphanData, usageData] = await Promise.all([
     api("/api/metrics/entities?sort=record_count&order=desc"),
     api("/api/metrics/overlap").catch(() => []),
     api("/api/usage/orphans").catch(() => ({ live: false, orphans: [] })),
+    api("/api/metrics/usage").catch(() => ({ rows: [] })),
   ]);
+  // Verdict per entity for the "used in" chips (unused/orphan/dangling only)
+  const usageMap = {};
+  ((usageData && usageData.rows) || []).forEach(u => { usageMap[u.entity_id] = u; });
   // Every id form that appears in the overlap matrix (display, exclude, natives)
   const dupIds = new Set();
   (overlapRows || []).forEach(o => {
@@ -661,7 +667,7 @@ async function renderEntities() {
           el(
             "tr",
             {},
-            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a>${dupIds.has(r.entity_id) ? ` <a href="#overlap" class="muted" title="Duplicated across databases — open Overlap tab">≡ dup</a>` : ""}${orphanSeen.has(r.entity_id) ? ` <span class="pill" title="Not present in live HA states${orphanSeen.get(r.entity_id) ? ` — last seen ${fmtDate(orphanSeen.get(r.entity_id))}` : ""}">orphan</span>` : ""}</td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
+            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a>${dupIds.has(r.entity_id) ? ` <a href="#overlap" class="muted" title="Duplicated across databases — open Overlap tab">≡ dup</a>` : ""}${orphanSeen.has(r.entity_id) ? ` <span class="pill" title="Not present in live HA states${orphanSeen.get(r.entity_id) ? ` — last seen ${fmtDate(orphanSeen.get(r.entity_id))}` : ""}">orphan</span>` : ""}${(() => { const u = usageMap[r.entity_id]; if (!u || (u.verdict !== "unused" && u.verdict !== "dangling")) return ""; const style = u.verdict === "unused" ? "border-color:#f59e0b;color:#b45309" : "border-color:#8b5cf6;color:#7c3aed"; return ` <a href="#usage" class="usage-jump" data-uq="${r.entity_id}" title="${u.total_refs} reference${u.total_refs === 1 ? "" : "s"} — open Usage tab"><span class="pill" style="${style}">${u.verdict}</span></a>`; })()}</td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
           )
         )
       );
@@ -671,6 +677,10 @@ async function renderEntities() {
         e.preventDefault();
         await showEntityValues(a.dataset.db, a.dataset.entity);
       };
+    });
+    // Usage-tab jumps (plain navigation; pendingUsageFilter is consumed on render)
+    tbody.querySelectorAll("a.usage-jump").forEach(a => {
+      a.onclick = () => { pendingUsageFilter = a.dataset.uq; };
     });
   };
   table.querySelectorAll("th[data-sort]").forEach((th) => {
@@ -1332,6 +1342,203 @@ async function renderInfluxDB() {
   } finally {
     clearInterval(tick);
   }
+}
+
+// Usage tab: where is each entity referenced, and what's safe to delete
+async function renderUsage() {
+  view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
+  const data = await api("/api/metrics/usage").catch(() => ({ rows: [], by_verdict: {}, by_type: {}, scanned_at: null }));
+  view.innerHTML = "";
+  const rows = data.rows || [];
+  const bv = data.by_verdict || {};
+
+  const grid = el("div", { class: "grid" });
+  grid.append(
+    metricCard("Used", (bv.used || 0).toLocaleString()),
+    metricCard("Unused", (bv.unused || 0).toLocaleString()),
+    metricCard("Orphaned", (bv.orphan || 0).toLocaleString()),
+    metricCard("Dangling refs", (bv.dangling || 0).toLocaleString())
+  );
+  view.append(grid);
+
+  const card = el("div", { class: "card" });
+  card.append(el("h3", { style: "margin:0" }, "Entity Usage"));
+  card.append(el("p", { class: "muted" },
+    "Where each entity is referenced: automations, scripts, scenes, dashboards, templates, helpers, " +
+    "energy, configs. Unused means zero references anywhere — even disabled counts as used. " +
+    "Orphaned means in a database but gone from live HA. Click an entity for exact locations."));
+  const headerRow = el("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px" });
+  const search = el("input", { placeholder: "search entity_id…", style: "flex:1;min-width:200px;padding:8px" });
+  headerRow.append(search);
+  const verdictFilter = el("select", { style: "padding:8px;min-width:160px" });
+  [["", "All verdicts"], ["used", "Used"], ["unused", "Unused"], ["orphan", "Orphaned"], ["dangling", "Dangling refs"]].forEach(([v, label]) => verdictFilter.append(el("option", { value: v }, label)));
+  headerRow.append(verdictFilter);
+  const rescan = el("button", { class: "action" }, "Rescan usage");
+  const rescanStatus = el("span", { class: "muted" });
+  rescan.onclick = async () => {
+    rescan.disabled = true;
+    const t0 = Date.now();
+    rescanStatus.textContent = "scanning… 0s";
+    const tick = setInterval(() => {
+      rescanStatus.textContent = `scanning… ${Math.round((Date.now() - t0) / 1000)}s`;
+    }, 1000);
+    try {
+      await api("/api/usage/rescan", { method: "POST" });
+      router();
+    } catch (e) {
+      rescanStatus.textContent = e.message;
+    } finally {
+      clearInterval(tick);
+      rescan.disabled = false;
+    }
+  };
+  headerRow.append(rescan, rescanStatus);
+  card.append(headerRow);
+  if (data.scanned_at) {
+    card.append(el("p", { class: "muted" }, `Last scanned: ${fmtDate(data.scanned_at)}`));
+  }
+
+  const table = el("table", { class: "ovlp" });
+  table.innerHTML =
+    "<colgroup>" +
+    "<col style='width:30%'/>" +
+    "<col style='width:12%'/>" +
+    "<col style='width:10%'/>" +
+    "<col style='width:26%'/>" +
+    "<col style='width:12%'/>" +
+    "<col style='width:10%'/>" +
+    "</colgroup>" +
+    "<thead><tr><th data-sort='entity_id'>Entity</th><th data-sort='verdict'>Verdict</th>" +
+    "<th data-sort='total_refs' style='text-align:right'>Refs ▼</th><th>Used in</th>" +
+    "<th>Stored</th><th data-sort='last_seen'>Last seen</th></tr></thead>";
+  const tbody = el("tbody");
+  table.append(tbody);
+  card.append(table);
+  view.append(card);
+
+  const verdictPill = (r) => {
+    const v = r.verdict || "unknown";
+    const style =
+      v === "unused" ? "border-color:#f59e0b;color:#b45309" :
+      v === "orphan" ? "border-color:#e11d48;color:#e11d48" :
+      v === "dangling" ? "border-color:#8b5cf6;color:#7c3aed" : "";
+    const extra = [];
+    if (r.excluded) extra.push("excluded");
+    if (r.has_lts) extra.push("LTS");
+    return `<span class="pill" style="${style}" title="${v}${extra.length ? ` (${extra.join(", ")})` : ""}${r.last_seen ? ` — last seen ${fmtDate(r.last_seen)}` : ""}">${v}</span>`;
+  };
+  const breakdown = (r) => {
+    const entries = Object.entries(r.refs || {});
+    if (!entries.length) return '<span class="muted">—</span>';
+    return entries.map(([t, locs]) => {
+      const n = locs.reduce((s, e) => s + (e.count || 0), 0);
+      return `${n} ${t}`;
+    }).join(" · ");
+  };
+
+  let currentSort = "total_refs";
+  let currentOrder = "desc";
+  let currentVerdict = "";
+  const draw = (q) => {
+    tbody.innerHTML = "";
+    [...rows]
+      .filter((r) => (!q || r.entity_id.includes(q)) && (!currentVerdict || r.verdict === currentVerdict))
+      .sort((a, b) => {
+        const av = a[currentSort];
+        const bv = b[currentSort];
+        let cmp;
+        if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+        else cmp = String(av ?? "").localeCompare(String(bv ?? ""));
+        return currentOrder === "desc" ? -cmp : cmp;
+      })
+      .slice(0, 500)
+      .forEach((r) => {
+        const tr = el("tr");
+        const entTd = el("td");
+        const jump = el("a", { href: "#", title: "Show reference locations" });
+        jump.onclick = (e) => { e.preventDefault(); showUsageDetail(r); };
+        jump.innerHTML = `<code>${r.entity_id}</code>`;
+        entTd.append(jump);
+        const vTd = el("td");
+        vTd.innerHTML = verdictPill(r);
+        const refsTd = el("td", { style: "text-align:right;font-variant-numeric:tabular-nums" });
+        refsTd.textContent = (r.total_refs ?? 0).toLocaleString();
+        const usedTd = el("td");
+        usedTd.innerHTML = `<span class="muted" style="font-size:12px">${breakdown(r)}</span>`;
+        const storedTd = el("td");
+        const stored = r.recorded_in || [];
+        storedTd.innerHTML = stored.length ? `<span class="muted" style="font-size:12px">${stored.join(", ")}</span>` : '<span class="muted">—</span>';
+        const seenTd = el("td");
+        seenTd.textContent = fmtDate(r.last_seen);
+        tr.append(entTd, vTd, refsTd, usedTd, storedTd, seenTd);
+        tbody.append(tr);
+      });
+  };
+  table.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.onclick = () => {
+      const sort = th.dataset.sort;
+      if (sort === currentSort) {
+        currentOrder = currentOrder === "desc" ? "asc" : "desc";
+      } else {
+        currentSort = sort;
+        currentOrder = "desc";
+      }
+      draw(search.value);
+      table.querySelectorAll("th[data-sort]").forEach((h) => {
+        const arrow = h.dataset.sort === currentSort ? (currentOrder === "desc" ? " ▼" : " ▲") : "";
+        h.textContent = h.textContent.replace(/ [▲▼]$/, "") + arrow;
+      });
+    };
+  });
+  verdictFilter.onchange = () => {
+    currentVerdict = verdictFilter.value;
+    draw(search.value);
+  };
+  search.oninput = () => draw(search.value);
+  if (pendingUsageFilter) {
+    search.value = pendingUsageFilter;
+    draw(pendingUsageFilter);
+    pendingUsageFilter = "";
+  } else {
+    draw("");
+  }
+}
+
+async function showUsageDetail(r) {
+  const modal = el("div", { class: "modal-overlay" });
+  const content = el("div", { class: "modal", style: "max-width:700px;max-height:80vh;overflow:auto" });
+  const header = el("div", { style: "display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding:12px 16px" });
+  header.append(el("h3", {}, r.entity_id));
+  const closeBtn = el("button", { class: "action muted" });
+  closeBtn.textContent = "Close";
+  closeBtn.onclick = (e) => { e.stopPropagation(); modal.remove(); };
+  header.append(closeBtn);
+  content.append(header);
+  const body = el("div", { style: "padding:16px" });
+  const meta = [];
+  meta.push(`Verdict: ${r.verdict || "unknown"}`);
+  meta.push(`References: ${(r.total_refs ?? 0).toLocaleString()}`);
+  if (r.recorded_in && r.recorded_in.length) meta.push(`Stored in: ${r.recorded_in.join(", ")}`);
+  if (r.has_lts) meta.push("Has long-term statistics");
+  if (r.excluded) meta.push("In recorder exclude list");
+  if (r.last_seen) meta.push(`Last seen: ${fmtDate(r.last_seen)}`);
+  body.append(el("p", { class: "muted" }, meta.join(" · ")));
+  const entries = Object.entries(r.refs || {});
+  if (!entries.length) {
+    body.append(el("p", { class: "muted" }, r.verdict === "orphan" ? "No references found, and absent from live HA states." : "No references found anywhere."));
+  }
+  entries.forEach(([t, locs]) => {
+    body.append(el("h4", { style: "margin:12px 0 4px" }, `${t} (${locs.reduce((s, e) => s + (e.count || 0), 0)})`));
+    const ul = el("ul", { style: "margin:0 0 8px 18px;padding:0;font-size:13px" });
+    locs.forEach((loc) => {
+      ul.append(el("li", {}, `${loc.where} ×${loc.count}`));
+    });
+    body.append(ul);
+  });
+  content.append(body);
+  modal.append(content);
+  view.append(modal);
 }
 async function renderAbout() {
   view.innerHTML = "";
