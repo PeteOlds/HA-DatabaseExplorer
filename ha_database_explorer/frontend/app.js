@@ -19,6 +19,14 @@ function fmtMB(mb) {
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
 
+// Cross-tab navigation: a link in one tab jumps to Entities with search pre-filled.
+let pendingEntitySearch = "";
+function jumpToEntities(query) {
+  pendingEntitySearch = query || "";
+  if ((location.hash || "") === "#entities") router();
+  else location.hash = "#entities";
+}
+
 async function api(path, opts) {
   const url = BASE + String(path).replace(/^\//, "");
   const res = await fetch(url, opts);
@@ -563,7 +571,17 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : "—"; }
 
 async function renderEntities() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
-  const rows = await api("/api/metrics/entities?sort=record_count&order=desc");
+  const [rows, overlapRows] = await Promise.all([
+    api("/api/metrics/entities?sort=record_count&order=desc"),
+    api("/api/metrics/overlap").catch(() => []),
+  ]);
+  // Every id form that appears in the overlap matrix (display, exclude, natives)
+  const dupIds = new Set();
+  (overlapRows || []).forEach(o => {
+    dupIds.add(o.entity_id);
+    if (o.exclude_entity_id) dupIds.add(o.exclude_entity_id);
+    Object.values(o.native_ids || {}).forEach(n => dupIds.add(n));
+  });
   view.innerHTML = "";
   if (!rows.length) {
     view.innerHTML = "<div class='card'><p class='muted'>No entities found. Run a scan in Setup tab.</p></div>";
@@ -634,7 +652,7 @@ async function renderEntities() {
           el(
             "tr",
             {},
-            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a></td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
+            `<td><a href="#" class="entity-link" data-db="${r.db_id}" data-entity="${r.entity_id}" title="${r.entity_id}">${r.entity_id}</a>${dupIds.has(r.entity_id) ? ` <a href="#overlap" class="muted" title="Duplicated across databases — open Overlap tab">≡ dup</a>` : ""}</td><td>${r.record_count}</td><td>${fmtDate(r.start_date)}</td><td>${fmtDate(r.end_date)}</td><td>${r.updates_per_day != null ? Math.round(r.updates_per_day) : "—"}</td><td>${r.connection_name || "—"}</td>`
           )
         )
       );
@@ -671,7 +689,15 @@ async function renderEntities() {
     draw(search.value);
   };
   search.oninput = () => draw(search.value);
-  draw("");
+  if (pendingEntitySearch) {
+    search.value = pendingEntitySearch;
+    sourceFilter.value = "";
+    currentSourceFilter = "";
+    draw(pendingEntitySearch);
+    pendingEntitySearch = "";
+  } else {
+    draw("");
+  }
   card.append(table);
   view.append(card);
 }
@@ -749,11 +775,14 @@ async function renderOverlap() {
     };
     cbTd.append(cb);
 
-    // Entity cell: monospace id, native forms on hover
+    // Entity cell: monospace id (links to Entities tab), native forms on hover
     const natives = r.native_ids ? [...new Set(Object.values(r.native_ids))] : [];
     const nativeTip = natives.filter(n => n !== r.entity_id).join(", ");
     const entTd = el("td");
-    entTd.innerHTML = `<code title="${nativeTip ? `Also stored as: ${nativeTip}` : r.entity_id}">${r.entity_id}</code>`;
+    const entJump = el("a", { href: "#entities", title: "Open in Entities tab" });
+    entJump.onclick = () => { pendingEntitySearch = r.entity_id; };
+    entJump.innerHTML = `<code title="${nativeTip ? `Also stored as: ${nativeTip}` : r.entity_id}">${r.entity_id}</code>`;
+    entTd.append(entJump);
 
     // Sources cell: one chip-like line per DB, native name as sub-caption
     const srcTd = el("td");
@@ -1189,19 +1218,27 @@ async function renderInfluxDB() {
       }
       tr.append(warnTd);
       
-      // Name + which entities live here
+      // Name + which entities live here (names link to Entities tab)
       const nameTd = el("td");
       const entCount = m.entity_count || 0;
-      const sample = (m.entities_sample || []).join(", ");
-      let sub;
+      const samples = m.entities_sample || [];
+      const linkFor = (q) => `<a href="#entities" data-q="${q}">${q}</a>`;
+      let subHtml, subTip;
       if (m.is_legacy) {
-        sub = `entity: ${m.name}`;
+        subHtml = `entity: ${linkFor(m.name)}`;
+        subTip = m.name;
       } else if (entCount > 0) {
-        sub = `${entCount} ${entCount === 1 ? "entity" : "entities"}${sample ? `: ${sample}${entCount > m.entities_sample.length ? "…" : ""}` : ""}`;
+        const shown = samples.map(linkFor).join(", ");
+        subHtml = `${entCount} ${entCount === 1 ? "entity" : "entities"}${shown ? `: ${shown}${entCount > samples.length ? "…" : ""}` : ""}`;
+        subTip = `${entCount} entities (showing ${samples.length})`;
       } else {
-        sub = "entity tags unavailable";
+        subHtml = "entity tags unavailable";
+        subTip = subHtml;
       }
-      nameTd.innerHTML = `<code>${m.name}</code><br><small class="muted" title="${sub}">${sub}</small>`;
+      nameTd.innerHTML = `<code>${m.name}</code><br><small class="muted" title="${subTip}">${subHtml}</small>`;
+      nameTd.querySelectorAll("a[data-q]").forEach(a => {
+        a.onclick = () => { pendingEntitySearch = a.dataset.q; };
+      });
       tr.append(nameTd);
       
       // Last point
