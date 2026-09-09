@@ -713,7 +713,7 @@ async function renderOverlap() {
     "<col style='width:12%'/>" +
     "<col style='width:16%'/>" +
     "</colgroup>" +
-    "<thead><tr><th></th><th data-sort='entity_id'>Entity</th><th>Stored in</th><th data-sort='total_redundant_records' style='text-align:right'>Redundant ▼</th><th data-sort='match_method'>Match</th></tr></thead>";
+    "<thead><tr><th></th><th data-sort='entity_id'>Entity</th><th data-sort='sources'>Stored in</th><th data-sort='total_redundant_records' style='text-align:right'>Redundant ▼</th><th data-sort='match_method'>Match</th></tr></thead>";
   const oBody = el("tbody");
   oTable.append(oBody);
   left.append(oTable);
@@ -722,9 +722,15 @@ async function renderOverlap() {
   let currentOrder = "desc";
   const drawOverlap = () => {
     oBody.innerHTML = "";
+    const keyOf = (r) => {
+      if (currentSort === "sources") {
+        return (r.present_in || []).map(dbId => dbNameMap[dbId] || dbId).join(" ");
+      }
+      return r[currentSort];
+    };
     const sorted = [...rows].sort((a, b) => {
-      const av = a[currentSort];
-      const bv = b[currentSort];
+      const av = keyOf(a);
+      const bv = keyOf(b);
       let cmp;
       if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
       else cmp = String(av ?? "").localeCompare(String(bv ?? ""));
@@ -787,7 +793,7 @@ async function renderOverlap() {
         currentOrder = currentOrder === "desc" ? "asc" : "desc";
       } else {
         currentSort = sort;
-        currentOrder = sort === "entity_id" || sort === "match_method" ? "asc" : "desc";
+        currentOrder = sort === "entity_id" || sort === "match_method" || sort === "sources" ? "asc" : "desc";
       }
       drawOverlap();
       oTable.querySelectorAll("th[data-sort]").forEach((h) => {
