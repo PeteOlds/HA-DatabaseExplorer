@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel
 
 from .cache import (
+    canonical_entity_id,
     get_databases,
     get_domain_metrics,
     get_entity_metrics,
@@ -516,9 +517,12 @@ async def usage_orphans():
     live = await get_live_entity_ids()
     if live is None:
         return {"live": False, "live_count": 0, "orphans": []}
+    # Match on canonical form too: InfluxDB stores the object-ID only
+    # (tag "chrome" for recorder entity "media_player.chrome").
+    live_canon = {canonical_entity_id(e) for e in live}
     out = []
     for e in await get_entity_metrics():
-        if e["entity_id"] not in live:
+        if e["entity_id"] not in live and canonical_entity_id(e["entity_id"]) not in live_canon:
             out.append(
                 {
                     "entity_id": e["entity_id"],
