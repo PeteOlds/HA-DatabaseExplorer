@@ -57,6 +57,7 @@ function router() {
     dashboard: renderDashboard,
     entities: renderEntities,
     overlap: renderOverlap,
+    influxdb: renderInfluxDB,
     about: renderAbout,
   };
   (map[hash] || renderDashboard)();
@@ -1036,7 +1037,152 @@ async function showEntityValues(dbId, entityId) {
 
 window.showEntityValues = showEntityValues;
 
-// About page
+// InfluxDB Measurements page
+async function renderInfluxDB() {
+  view.innerHTML = "<div class='card'><p class='muted'>Loading measurements…</p></div>";
+  try {
+    const resp = await api("/api/tools/influxdb-measurements");
+    const measurements = resp.measurements || [];
+    const error = resp.error;
+    view.innerHTML = "";
+    const card = el("div", { class: "card" });
+    
+    if (error) {
+      card.append(el("p", { class: "muted" }, error));
+      view.append(card);
+      return;
+    }
+    
+    card.append(
+      el("h2", {}, "InfluxDB Measurements"),
+      el("p", { class: "muted" }, 
+        "Measurements in the InfluxDB database. Legacy measurements (dotted names like 'automation.*', 'binary_sensor.*') " +
+        "pre-date the 'default_measurement' setting and may contain stale data. " +
+        "Consider dropping stale legacy measurements to reclaim space.")
+    );
+    
+    if (!measurements.length) {
+      card.append(el("p", { class: "muted" }, "No measurements found."));
+      view.append(card);
+      return;
+    }
+    
+    // Summary stats
+    const totalMeasurements = measurements.length;
+    const legacyCount = measurements.filter(m => m.is_legacy).length;
+    const totalPoints = measurements.reduce((sum, m) => sum + (m.point_count || 0), 0);
+    const totalSize = measurements.reduce((sum, m) => sum + (m.estimated_size_bytes || 0), 0);
+    
+    const summaryCard = el("div", { class: "card" });
+    summaryCard.append(
+      el("h3", {}, "Summary"),
+      el("p", {}, `Total measurements: <strong>${totalMeasurements}</strong>`),
+      el("p", {}, `Legacy measurements (dotted names): <strong>${legacyCount}</strong>`),
+      el("p", {}, `Total points: <strong>${totalPoints.toLocaleString()}</strong>`),
+      el("p", {}, `Estimated size: <strong>${fmtMB(totalSize)}</strong>`)
+    );
+    view.append(summaryCard);
+    
+    // Measurements table
+    const tableCard = el("div", { class: "card" });
+    const table = el("table", { class: "ovlp" });
+    table.innerHTML = 
+      "<colgroup>" +
+      "<col style='width:5%'/>" +
+      "<col style='width:25%'/>" +
+      "<col style='width:15%'/>" +
+      "<col style='width:12%'/>" +
+      "<col style='width:15%'/>" +
+      "<col style='width:12%'/>" +
+      "<col style='width:16%'/>" +
+      "</colgroup>" +
+      "<thead><tr>" +
+      "<th>⚠</th>" +
+      "<th>Measurement</th>" +
+      "<th>Last Point</th>" +
+      "<th>Points</th>" +
+      "<th>Est. Size</th>" +
+      "<th>Actions</th>" +
+      "</tr></thead>";
+    const tbody = el("tbody");
+    table.append(tbody);
+    
+    measurements.sort((a, b) => (a.is_legacy === b.is_legacy ? 0 : a.is_legacy ? -1 : 1));
+    
+    measurements.forEach(m => {
+      const tr = el("tr");
+      if (m.is_legacy) tr.style.background = "rgba(255, 193, 7, 0.05)";
+      
+      // Warning icon for legacy
+      const warnTd = el("td");
+      if (m.is_legacy) {
+        const warn = el("span", { class: "muted", title: "Legacy measurement (pre-default_measurement era)" }, "⚠");
+        warnTd.append(warn);
+      }
+      tr.append(warnTd);
+      
+      // Name
+      const nameTd = el("td");
+      nameTd.innerHTML = `<code>${m.name}</code>`;
+      tr.append(nameTd);
+      
+      // Last point
+      const lastTd = el("td");
+      if (m.last_point) {
+        try {
+          lastTd.textContent = new Date(m.last_point).toLocaleString();
+        } catch {
+          lastTd.textContent = m.last_point;
+        }
+      } else {
+        lastTd.innerHTML = '<span class="muted">—</span>';
+      }
+      tr.append(lastTd);
+      
+      // Points
+      const pointsTd = el("td");
+      pointsTd.textContent = (m.point_count || 0).toLocaleString();
+      tr.append(pointsTd);
+      
+      // Size
+      const sizeTd = el("td");
+      sizeTd.textContent = fmtMB(m.estimated_size_bytes);
+      tr.append(sizeTd);
+      
+      // Actions
+      const actionTd = el("td");
+      if (m.is_legacy) {
+        const dropBtn = el("button", { 
+          class: "action muted", 
+          style: "font-size:11px; padding:2px 8px",
+          title: "Drop this legacy measurement (irreversible)"
+        }, "Drop");
+        dropBtn.onclick = async () => {
+          if (!confirm(`Drop measurement "${m.name}"? This is irreversible and will delete ${m.point_count.toLocaleString()} points.`)) return;
+          try {
+            await api("/api/tools/influxdb-drop-measurement", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: m.name })
+            });
+            alert(`Dropped ${m.name}`);
+            router();
+          } catch (e) {
+            alert(`Failed to drop: ${e.message}`);
+          }
+        };
+        actionTd.append(dropBtn);
+      }
+      tr.append(actionTd);
+      
+      tbody.append(tr);
+    });
+    tableCard.append(table);
+    view.append(tableCard);
+  } catch (e) {
+    view.innerHTML = `<div class="card"><p class="muted">Error loading measurements: ${e.message}</p></div>`;
+  }
+}
 async function renderAbout() {
   view.innerHTML = "";
   const card = el("div", { class: "card" });

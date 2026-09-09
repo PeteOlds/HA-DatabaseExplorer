@@ -203,6 +203,59 @@ class InfluxDBConnector(BaseConnector):
         except Exception:
             return False
 
+    async def get_measurement_recency(self) -> list[dict]:
+        """Get recency info for all measurements in the database.
+        
+        Returns list of dicts with: name, last_point (ISO timestamp), 
+        point_count, estimated_size_bytes, is_legacy (bool).
+        """
+        try:
+            # Get all measurements
+            meas_rows = await self._query('SHOW MEASUREMENTS')
+            if not meas_rows:
+                return []
+            
+            measurement_names = [row[0] for row in meas_rows if row]
+            results = []
+            
+            for name in measurement_names:
+                try:
+                    # Get last point and count for this measurement
+                    # First check if it's a legacy dotted-name measurement
+                    is_legacy = '.' in name and not name.startswith('_')
+                    
+                    # Query last point time
+                    last_query = f'SELECT last(*) FROM "{name}"'
+                    last_rows = await self._query(last_query)
+                    last_point = None
+                    if last_rows and last_rows[0]:
+                        last_point = last_rows[0][0]  # time is first column
+                    
+                    # Query point count
+                    count_query = f'SELECT count(*) FROM "{name}"'
+                    count_rows = await self._query(count_query)
+                    point_count = 0
+                    if count_rows and count_rows[0] and len(count_rows[0]) > 1:
+                        point_count = int(count_rows[0][1])
+                    
+                    # Estimate size (rough: points * 50 bytes for typical point)
+                    estimated_size = point_count * 50
+                    
+                    results.append({
+                        "name": name,
+                        "last_point": last_point,
+                        "point_count": point_count,
+                        "estimated_size_bytes": estimated_size,
+                        "is_legacy": is_legacy,
+                    })
+                except Exception:
+                    # If query fails for this measurement, skip it
+                    continue
+            
+            return results
+        except Exception:
+            return []
+
     async def get_entity_values(self, entity_id: str, limit: int = 100, offset: int = 0) -> list[dict]:
         """Get recent state values for a specific entity from all measurements."""
         try:

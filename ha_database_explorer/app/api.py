@@ -651,3 +651,52 @@ async def read_only_guidance(engine: str = "mysql"):
         "sql": snippets.get(engine, snippets["mysql"]),
         "note": "Use a dedicated read-only account instead of root/homeassistant write creds.",
     }
+
+
+@app.post("/api/tools/influxdb-drop-measurement")
+async def influxdb_drop_measurement(req: dict):
+    """Drop a legacy InfluxDB measurement."""
+    name = req.get("name")
+    if not name:
+        return {"error": "Measurement name required"}
+    
+    conns = load_connections()
+    influx_conns = [c for c in conns if c.get("engine") == "influxdb"]
+    if not influx_conns:
+        return {"error": "No InfluxDB connection configured"}
+    conn = influx_conns[0]
+    
+    from .connectors import build_connector
+    connector = build_connector("influxdb", conn.get("id"), conn)
+    if not hasattr(connector, "delete_measurement"):
+        return {"error": "InfluxDB connector does not support dropping measurements"}
+    
+    try:
+        await connector._query(f'DROP MEASUREMENT "{name}"')
+        return {"success": True, "message": f"Dropped measurement {name}"}
+    except Exception as e:
+        return {"error": str(e)}
+async def influxdb_measurements(db_id: str | None = None):
+    """Get recency info for all InfluxDB measurements in a database."""
+    from .connectors import build_connector
+    
+    if db_id is None:
+        # Find the InfluxDB connection
+        conns = load_connections()
+        influx_conns = [c for c in conns if c.get("engine") == "influxdb"]
+        if not influx_conns:
+            return {"error": "No InfluxDB connection configured"}
+        conn = influx_conns[0]
+        db_id = conn.get("id")
+    else:
+        conns = load_connections()
+        conn = next((c for c in conns if c.get("id") == db_id), None)
+        if not conn or conn.get("engine") != "influxdb":
+            return {"error": "InfluxDB connection not found"}
+    
+    connector = build_connector(conn["engine"], db_id, conn)
+    if not hasattr(connector, "get_measurement_recency"):
+        return {"error": "InfluxDB connector does not support measurement recency"}
+    
+    measurements = await connector.get_measurement_recency()
+    return {"measurements": measurements}
