@@ -19,13 +19,9 @@ function fmtMB(mb) {
 const $ = (sel) => document.querySelector(sel);
 const view = $("#view");
 
-// Cross-tab navigation: a link in one tab jumps to Entities with search pre-filled.
+// Cross-tab navigation: links set pendingEntitySearch, then navigate via
+// location.hash so the router renders the target tab and consumes it.
 let pendingEntitySearch = "";
-function jumpToEntities(query) {
-  pendingEntitySearch = query || "";
-  if ((location.hash || "") === "#entities") router();
-  else location.hash = "#entities";
-}
 
 async function api(path, opts) {
   const url = BASE + String(path).replace(/^\//, "");
