@@ -156,9 +156,9 @@ def _collect_dashboards(root: Path) -> tuple[list[Doc], list[SurfaceStatus]]:
     files = sorted(
         p
         for p in storage.glob("lovelace*")
-        if p.is_file() and ".bak" not in p.name and p.suffix not in ("", ".log")
+        if p.is_file() and ".bak" not in p.name and ".log" not in p.name
     )
-    # storage lovelace files have no extension; keep JSON-parseable ones
+    # storage lovelace files have no extension; JSON parsing decides admissibility
     for path in files:
         text = _read(path)
         if text is None:
@@ -334,7 +334,7 @@ def run_usage_scan(
         for fname, otype in (("automations.yaml", "automation"), ("scripts.yaml", "script"), ("scenes.yaml", "scene")):
             d, st = _collect_yaml_objects(root / fname, otype)
             docs.extend(d)
-            statuses.append(SurfaceStatus(fname.replace(".yaml", "s") if fname != "scenes.yaml" else "scenes", st, f"{len(d)} objects"))
+            statuses.append(SurfaceStatus(fname[:-5] if fname != "scenes.yaml" else "scenes", st, f"{len(d)} objects"))
         dash_docs, dash_status = _collect_dashboards(root)
         docs.extend(dash_docs)
         statuses.extend(dash_status)
@@ -358,27 +358,28 @@ def run_usage_scan(
     pattern = _build_matcher(sorted(universe))
     refs: dict[str, dict[str, list[dict]]] = {}
 
-def _hit(store: dict, eid: str, object_type: str, where: str) -> None:
-    bucket = store.setdefault(eid, {})
-    entries = bucket.setdefault(object_type, [])
-    for en in entries:
-        if en["where"] == where:
-            en["count"] += 1
-            return
-    entries.append({"where": where, "count": 1})
-
     for doc in docs:
-        for m in pattern.findall(doc.text):
-            _hit(refs, m, doc.object_type, doc.where)
+        # Template-call matches first; direct matches inside those spans are
+        # the same occurrence, so exclude them to avoid double counting.
+        tpl_spans: list[tuple[int, int]] = []
+        tpl_hits: list[tuple[str, str]] = []
         for rx in TEMPLATE_RES:
             for tm in rx.finditer(doc.text):
+                tpl_spans.append((tm.start(), tm.end()))
                 groups = [g for g in tm.groups() if g]
                 for g in groups:
                     # expand() may hold comma-separated lists
                     for cand in re.split(r"[,'\"]+", g):
                         cand = cand.strip().strip("'\"")
                         if ENTITY_RE.fullmatch(cand or ""):
-                            _hit(refs, cand, doc.object_type, doc.where)
+                            tpl_hits.append((cand, doc.object_type))
+        for m in pattern.finditer(doc.text):
+            s, e = m.start(), m.end()
+            if any(a < e and s < b for a, b in tpl_spans):
+                continue
+            _hit(refs, m.group(), doc.object_type, doc.where)
+        for cand, otype in tpl_hits:
+            _hit(refs, cand, otype, doc.where)
         for dm in DEVICE_RE.findall(doc.text):
             if dm in dev_map:
                 dname, members = dev_map[dm]
@@ -433,6 +434,16 @@ def _hit(store: dict, eid: str, object_type: str, where: str) -> None:
             "dangling": len(dangling_rows),
         },
     }
+
+
+def _hit(store: dict, eid: str, object_type: str, where: str) -> None:
+    bucket = store.setdefault(eid, {})
+    entries = bucket.setdefault(object_type, [])
+    for en in entries:
+        if en["where"] == where:
+            en["count"] += 1
+            return
+    entries.append({"where": where, "count": 1})
 
 
 async def run_full_usage_scan() -> dict:
