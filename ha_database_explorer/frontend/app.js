@@ -10,7 +10,7 @@ const BASE = (() => {
   return path.replace(/\/[^/]*$/, "") + "/";
 })();
 
-const VERSION = "0.3.9"; // INJECTED_AT_BUILD - update on release
+const VERSION = "0.3.10"; // INJECTED_AT_BUILD - update on release
 
 function fmtMB(mb) {
   return mb != null && mb !== "" ? Math.round(mb).toLocaleString() + " MB" : "Unknown";
