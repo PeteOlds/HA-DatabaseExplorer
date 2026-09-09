@@ -1148,18 +1148,34 @@ async function renderInfluxDB() {
       "</colgroup>" +
       "<thead><tr>" +
       "<th>⚠</th>" +
-      "<th>Measurement</th>" +
-      "<th>Last Point</th>" +
-      "<th>Points</th>" +
-      "<th>Est. Size</th>" +
+      "<th data-sort='name'>Measurement</th>" +
+      "<th data-sort='last_point'>Last Point</th>" +
+      "<th data-sort='point_count'>Points</th>" +
+      "<th data-sort='estimated_size_bytes'>Est. Size</th>" +
       "<th>Actions</th>" +
       "</tr></thead>";
     const tbody = el("tbody");
     table.append(tbody);
-    
-    measurements.sort((a, b) => (a.is_legacy === b.is_legacy ? 0 : a.is_legacy ? -1 : 1));
-    
-    measurements.forEach(m => {
+
+    // Initial order is the triage order (legacy candidates first); arrows
+    // appear once the user picks an explicit sort, same UX as other tabs.
+    let currentSort = "";
+    let currentOrder = "desc";
+    const drawMeasurements = () => {
+      tbody.innerHTML = "";
+      const sorted = [...measurements].sort((a, b) => {
+        if (!currentSort) {
+          return (a.is_legacy === b.is_legacy) ? 0 : a.is_legacy ? -1 : 1;
+        }
+        const av = a[currentSort];
+        const bv = b[currentSort];
+        let cmp;
+        if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+        else cmp = String(av ?? "").localeCompare(String(bv ?? ""));
+        return currentOrder === "desc" ? -cmp : cmp;
+      });
+
+    sorted.forEach(m => {
       const tr = el("tr");
       if (m.is_legacy) tr.style.background = "rgba(255, 193, 7, 0.05)";
       
@@ -1226,6 +1242,25 @@ async function renderInfluxDB() {
       tr.append(actionTd);
       
       tbody.append(tr);
+    });
+    };
+    drawMeasurements();
+    table.querySelectorAll("th[data-sort]").forEach((th) => {
+      th.style.cursor = "pointer";
+      th.onclick = () => {
+        const sort = th.dataset.sort;
+        if (sort === currentSort) {
+          currentOrder = currentOrder === "desc" ? "asc" : "desc";
+        } else {
+          currentSort = sort;
+          currentOrder = sort === "name" ? "asc" : "desc";
+        }
+        drawMeasurements();
+        table.querySelectorAll("th[data-sort]").forEach((h) => {
+          const arrow = h.dataset.sort === currentSort ? (currentOrder === "desc" ? " ▼" : " ▲") : "";
+          h.textContent = h.textContent.replace(/ [▲▼]$/, "") + arrow;
+        });
+      };
     });
     tableCard.append(table);
     view.append(tableCard);
