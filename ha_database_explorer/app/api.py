@@ -676,6 +676,7 @@ async def influxdb_drop_measurement(req: dict):
         return {"success": True, "message": f"Dropped measurement {name}"}
     except Exception as e:
         return {"error": str(e)}
+@app.get("/api/tools/influxdb-measurements")
 async def influxdb_measurements(db_id: str | None = None):
     """Get recency info for all InfluxDB measurements in a database."""
     from .connectors import build_connector

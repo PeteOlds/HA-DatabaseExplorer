@@ -713,17 +713,30 @@ async function renderOverlap() {
     "<col style='width:12%'/>" +
     "<col style='width:16%'/>" +
     "</colgroup>" +
-    "<thead><tr><th></th><th>Entity</th><th>Stored in</th><th style='text-align:right'>Redundant</th><th>Match</th></tr></thead>";
+    "<thead><tr><th></th><th data-sort='entity_id'>Entity</th><th>Stored in</th><th data-sort='total_redundant_records' style='text-align:right'>Redundant ▼</th><th data-sort='match_method'>Match</th></tr></thead>";
   const oBody = el("tbody");
   oTable.append(oBody);
   left.append(oTable);
 
-  rows.forEach((r) => {
+  let currentSort = "total_redundant_records";
+  let currentOrder = "desc";
+  const drawOverlap = () => {
+    oBody.innerHTML = "";
+    const sorted = [...rows].sort((a, b) => {
+      const av = a[currentSort];
+      const bv = b[currentSort];
+      let cmp;
+      if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av ?? "").localeCompare(String(bv ?? ""));
+      return currentOrder === "desc" ? -cmp : cmp;
+    });
+    sorted.forEach((r) => {
     const tr = el("tr");
     const yamlId = r.exclude_entity_id || r.entity_id;
 
     const cbTd = el("td");
     const cb = el("input", { type: "checkbox" });
+    cb.checked = selected.has(yamlId);
     cb.onchange = () => {
       cb.checked ? selected.add(yamlId) : selected.delete(yamlId);
       updateYaml();
@@ -763,6 +776,25 @@ async function renderOverlap() {
 
     tr.append(cbTd, entTd, srcTd, redTd, matchTd);
     oBody.append(tr);
+    });
+  };
+  drawOverlap();
+  oTable.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.onclick = () => {
+      const sort = th.dataset.sort;
+      if (sort === currentSort) {
+        currentOrder = currentOrder === "desc" ? "asc" : "desc";
+      } else {
+        currentSort = sort;
+        currentOrder = sort === "entity_id" || sort === "match_method" ? "asc" : "desc";
+      }
+      drawOverlap();
+      oTable.querySelectorAll("th[data-sort]").forEach((h) => {
+        const arrow = h.dataset.sort === currentSort ? (currentOrder === "desc" ? " ▼" : " ▲") : "";
+        h.textContent = h.textContent.replace(/ [▲▼]$/, "") + arrow;
+      });
+    };
   });
 function updateYaml() {
     const ids = [...selected];
