@@ -19,11 +19,12 @@ class SQLiteConnector(BaseConnector):
         self.path = Path(config.get("path", DEFAULT_PATH))
 
     async def test_connection(self) -> bool:
-        if self.path == ":memory:":
+        if str(self.path) == ":memory:":
             # Sandbox database: no tables by design, so connectivity (not
-            # schema) is what "test" means here.
+            # schema) is what "test" means here. Note: self.path is a
+            # pathlib.Path, which never == a plain string.
             try:
-                async with aiosqlite.connect(self.path) as db:
+                async with aiosqlite.connect(":memory:") as db:
                     await db.execute("SELECT 1")
                 return True
             except Exception:
