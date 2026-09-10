@@ -20,9 +20,11 @@ class SQLiteConnector(BaseConnector):
 
     async def test_connection(self) -> bool:
         if self.path == ":memory:":
+            # Sandbox database: no tables by design, so connectivity (not
+            # schema) is what "test" means here.
             try:
                 async with aiosqlite.connect(self.path) as db:
-                    await db.execute("SELECT 1 FROM states_meta LIMIT 1")
+                    await db.execute("SELECT 1")
                 return True
             except Exception:
                 return False

@@ -77,7 +77,18 @@ async function renderDiscovery() {
     const cfgCard = el("div", { class: "card" }, "<h3>Configured databases</h3>");
     const cfgTable = el("table");
     cfgTable.innerHTML =
-      "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th>Duration</th><th>Retention</th><th></th></tr></thead>";
+      "<colgroup>" +
+      "<col style='width:16%'/>" +
+      "<col style='width:8%'/>" +
+      "<col style='width:15%'/>" +
+      "<col style='width:9%'/>" +
+      "<col style='width:11%'/>" +
+      "<col style='width:6%'/>" +
+      "<col style='width:11%'/>" +
+      "<col style='width:12%'/>" +
+      "<col style='width:12%'/>" +
+      "</colgroup>" +
+      "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th>Duration</th><th>Retention</th><th title='Retention actions for this database'>Manage</th><th>Connection</th></tr></thead>";
     const cfgBody = el("tbody");
     configured.forEach((d) => {
       const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
@@ -103,12 +114,8 @@ async function renderDiscovery() {
           retentionDisplay = "Not Set";
         }
         retentionActions = `
-          <td>
-            <button class="action small" onclick="manageInfluxRPs('${d.connection_name}')">Manage RPs</button>
-          </td>
-          <td>
-            <button class="action small" onclick="refreshRetention('${d.connection_name}')">⟳</button>
-          </td>
+          <button class="action small" onclick="manageInfluxRPs('${d.connection_name}')" title="View, create, alter and delete InfluxDB retention policies">Manage RPs</button>
+          <button class="action small" onclick="refreshRetention('${d.connection_name}')" title="Re-read retention policies from InfluxDB">⟳</button>
         `;
       } else {
         // HA Recorder: show retention_days
@@ -116,31 +123,23 @@ async function renderDiscovery() {
         retentionDisplay = retentionDays !== null && retentionDays !== undefined
           ? `${retentionDays} days`
           : "Not Set";
-        retentionActions = `
-          <td>
-            ${retentionDays !== null && retentionDays !== undefined
-              ? `<button class="action small" onclick="editRetention('${d.connection_name}')">Edit</button>`
-              : ""}
-          </td>
-          <td>
-            ${retentionDays !== null && retentionDays !== undefined
-              ? `<button class="action small" onclick="refreshRetention('${d.connection_name}')">⟳</button>`
-              : ""}
-          </td>
-        `;
+        retentionActions = retentionDays !== null && retentionDays !== undefined
+          ? `<button class="action small" onclick="editRetention('${d.connection_name}', this)" title="Change purge_keep_days (writes configuration.yaml)">Edit</button>
+             <button class="action small" onclick="refreshRetention('${d.connection_name}')" title="Re-read purge_keep_days from HA config">⟳</button>`
+          : "";
       }
-      
+
       const tr = el(
         "tr",
-        {},
+        { "data-engine": d.engine },
         `<td>${d.connection_name}</td><td>${d.engine}</td><td>${hostLabel}</td>` +
           `<td class="status ${d.status || "unknown"}">${d.status || "—"}</td>` +
           `<td>${scanned}</td><td>${duration}</td>` +
-          `<td>${retentionDisplay}</td>` +
-          retentionActions +
+          `<td class="ret-cell">${retentionDisplay}</td>` +
+          `<td class="ret-actions">${retentionActions}</td>` +
           `<td>` +
-          `<button class="action" onclick="editConnection(arguments[0])">Edit</button>` +
-          `<button class="action" onclick="deleteConnection('${d.connection_name}')">Remove</button>` +
+          `<button class="action" onclick="editConnection('${d.connection_name}')" title="Edit this connection's host, port, user and database">Edit</button>` +
+          `<button class="action" onclick="deleteConnection('${d.connection_name}')" title="Remove this connection from the explorer">Remove</button>` +
           `</td>`
       );
       cfgBody.append(tr);
@@ -329,9 +328,11 @@ function manualForm(existing) {
   return card;
 }
 
-function editConnection(d) {
+async function editConnection(connectionName) {
+  const conns = await api("/api/connections").catch(() => []);
+  const existing = conns.find(c => c.connection_name === connectionName) || { connection_name: connectionName };
   const cur = document.getElementById("manual-card");
-  const form = manualForm(d);
+  const form = manualForm(existing);
   form.id = "manual-card";
   if (cur) cur.replaceWith(form);
   else view.append(form);
@@ -377,8 +378,8 @@ async function manageInfluxRPs(connectionName) {
         <td style="padding:8px">${rp.replica_n || "—"}</td>
         <td style="padding:8px">${rp.default ? "★" : "—"}</td>
         <td style="padding:8px">
-          <button class="action small" onclick="editInfluxRP('${connectionName}', '${JSON.stringify(rp).replace(/"/g, '\\"')}')">Edit</button>
-          <button class="action small muted" onclick="deleteInfluxRP('${connectionName}', '${rp.name}')">Delete</button>
+          <button class="action small" onclick="editInfluxRP('${connectionName}', '${JSON.stringify(rp).replace(/"/g, '\\"')}')" title="Edit this retention policy's duration and settings">Edit</button>
+          <button class="action small muted" onclick="deleteInfluxRP('${connectionName}', '${rp.name}')" title="Delete this retention policy (irreversible)">Delete</button>
         </td>
       `;
       tbody.append(tr);
@@ -464,11 +465,24 @@ async function manageInfluxRPs(connectionName) {
 
 async function renderDashboard() {
   view.innerHTML = "<div class='card'><p class='muted'>Loading…</p></div>";
-  const [global, dbs, last] = await Promise.all([
-    api("/api/metrics/global"),
-    api("/api/databases"),
-    api("/api/scan/last").catch(() => null),
-  ]);
+  let global = null, dbs = [], last = null;
+  try {
+    [global, dbs, last] = await Promise.all([
+      api("/api/metrics/global"),
+      api("/api/databases").catch(() => []),
+      api("/api/scan/last").catch(() => null),
+    ]);
+  } catch (e) {
+    view.innerHTML = "";
+    const errCard = el("div", { class: "card" });
+    errCard.append(el("p", {}, `Dashboard data failed to load: ${e.message}`));
+    const retry = el("button", { class: "action" }, "Retry");
+    retry.onclick = () => router();
+    errCard.append(retry);
+    view.append(errCard);
+    return;
+  }
+  view.innerHTML = "";
   if (!global || global.database_count === 0) {
     view.innerHTML = "<div class='card'><p class='muted'>No data available yet. Configure databases in Setup tab.</p></div>";
     return;
@@ -865,7 +879,21 @@ function updateYaml() {
 }
 
 // Retention management for Setup tab
-async function editRetention(connectionName) {
+// Buttons rendered into innerHTML templates below resolve against window,
+// so the entry points are exposed there (see bottom of file).
+function retentionActionsHTML(connectionName, isInflux) {
+  if (isInflux) {
+    return `<button class="action small" onclick="manageInfluxRPs('${connectionName}')" title="View, create, alter and delete InfluxDB retention policies">Manage RPs</button>
+ <button class="action small" onclick="refreshRetention('${connectionName}')" title="Re-read retention policies from InfluxDB">⟳</button>`;
+  }
+  return `<button class="action small" onclick="editRetention('${connectionName}', this)" title="Change purge_keep_days (writes configuration.yaml)">Edit</button>
+ <button class="action small" onclick="refreshRetention('${connectionName}')" title="Re-read purge_keep_days from HA config">⟳</button>`;
+}
+async function editRetention(connectionName, btn) {
+  const row = btn ? btn.closest("tr") : null;
+  const cell = row ? row.querySelector(".ret-cell") : null;
+  const actions = row ? row.querySelector(".ret-actions") : null;
+  if (!row || !cell || !actions) return alert("Could not find table row");
   const current = await api(`/api/databases/${connectionName}/retention`).then(r => r.retention_days);
   const input = document.createElement("input");
   input.type = "number";
@@ -876,12 +904,10 @@ async function editRetention(connectionName) {
   input.style.marginRight = "8px";
   const saveBtn = el("button", { class: "action", style: "margin-left:8px" }, "Save");
   const cancelBtn = el("button", { class: "muted", style: "margin-left:8px" }, "Cancel");
-  const row = event.target.closest("tr");
-  const cells = row.querySelectorAll("td");
-  // cells[4] = Retention display, cells[6] = action buttons column
-  cells[4].textContent = current !== null && current !== undefined ? String(current) : "—";
-  cells[6].innerHTML = "";
-  cells[6].append(input, saveBtn, cancelBtn);
+  // cells: ret-cell = Retention display, ret-actions = action buttons column
+  cell.textContent = current !== null && current !== undefined ? String(current) : "—";
+  actions.innerHTML = "";
+  actions.append(input, saveBtn, cancelBtn);
   saveBtn.onclick = async () => {
     const days = parseInt(input.value);
     if (isNaN(days) || days < 1 || days > 365) return alert("Enter 1..365");
@@ -891,18 +917,16 @@ async function editRetention(connectionName) {
       body: JSON.stringify({ retention_days: days }),
     });
     if (r.saved) {
-      cells[4].textContent = `${r.retention_days} days`;
-      cells[6].innerHTML = `<button class="action small" onclick="editRetention('${connectionName}')">Edit</button>
-<button class="action small" onclick="refreshRetention('${connectionName}')">⟳</button>`;
+      cell.textContent = `${r.retention_days} days`;
+      actions.innerHTML = retentionActionsHTML(connectionName, false);
     }
   };
   cancelBtn.onclick = () => {
     // restore: re-read from API to get the correct value
     api(`/api/databases/${connectionName}/retention`).then(r => {
-      cells[4].textContent = r.retention_days !== null ? `${r.retention_days} days` : "Not Set";
+      cell.textContent = r.retention_days !== null ? `${r.retention_days} days` : "Not Set";
     });
-    cells[6].innerHTML = `<button class="action small" onclick="editRetention('${connectionName}')">Edit</button>
-<button class="action small" onclick="refreshRetention('${connectionName}')">⟳</button>`;
+    actions.innerHTML = retentionActionsHTML(connectionName, false);
   };
 }
 
@@ -918,12 +942,20 @@ async function refreshRetention(connectionName) {
     }
   }
   if (!row) return;
-  const cells = row.querySelectorAll("td");
-  const display = r.retention_days !== null ? `${r.retention_days} days` : "Not Set";
-  cells[4].textContent = display; // Retention column is index 4
+  const cell = row.querySelector(".ret-cell");
+  const actions = row.querySelector(".ret-actions");
+  if (!cell || !actions) return;
+  const isInflux = row.dataset.engine === "influxdb";
+  if (isInflux) {
+    api(`/api/databases/${connectionName}/retention`).then(rp => {
+      const list = rp.influxdb_rp || [];
+      cell.textContent = list.length ? list.map(p => `${p.name} (${p.duration})`).join(", ") : "Not Set";
+    });
+  } else {
+    cell.textContent = r.retention_days !== null ? `${r.retention_days} days` : "Not Set";
+  }
   // Update action buttons
-  cells[6].innerHTML = `<button class="action small" onclick="editRetention('${connectionName}')">Edit</button>
-<button class="action small" onclick="refreshRetention('${connectionName}')">⟳</button>`;
+  actions.innerHTML = retentionActionsHTML(connectionName, isInflux);
 }
 
 // InfluxDB RP Edit/Delete (called from modal)
@@ -1123,6 +1155,17 @@ async function showEntityValues(dbId, entityId) {
 }
 
 window.showEntityValues = showEntityValues;
+
+// Inline onclick handlers inside innerHTML templates resolve against the
+// global scope, which module code is invisible to — so every function
+// referenced that way is exposed here in one place.
+window.manageInfluxRPs = manageInfluxRPs;
+window.refreshRetention = refreshRetention;
+window.editRetention = editRetention;
+window.editConnection = editConnection;
+window.deleteConnection = deleteConnection;
+window.editInfluxRP = editInfluxRP;
+window.deleteInfluxRP = deleteInfluxRP;
 
 // InfluxDB Measurements page
 async function renderInfluxDB() {
@@ -1366,7 +1409,9 @@ async function renderUsage() {
   card.append(el("p", { class: "muted" },
     "Where each entity is referenced: automations, scripts, scenes, dashboards, templates, helpers, " +
     "energy, configs. Unused means zero references anywhere — even disabled counts as used. " +
-    "Orphaned means in a database but gone from live HA. Click an entity for exact locations."));
+    "Orphaned means in a database but gone from live HA. " +
+    "Dangling means referenced somewhere but found in no database and not live — usually a renamed or deleted entity left behind in config. " +
+    "Click an entity for exact locations."));
   const headerRow = el("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px" });
   const search = el("input", { placeholder: "search entity_id…", style: "flex:1;min-width:200px;padding:8px" });
   headerRow.append(search);

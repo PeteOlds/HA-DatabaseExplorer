@@ -66,8 +66,13 @@ async def lifespan(app: FastAPI):
         if not await get_databases():
             _spawn_scan(uuid.uuid4().hex)
     scheduler = AsyncIOScheduler()
+    # NOTE: APScheduler runs plain-function jobs in a threadpool with no
+    # running event loop, so the job target must be a coroutine function.
+    # A lambda calling _spawn_scan (asyncio.create_task) raises
+    # "RuntimeError: no running event loop" and the scheduled scan silently
+    # never runs. AsyncIOScheduler schedules coroutine functions natively.
     scheduler.add_job(
-        lambda: _spawn_scan(uuid.uuid4().hex),
+        _scheduled_scan,
         CronTrigger.from_crontab(get_scan_cron()),
         id="deep_scan",
         replace_existing=True,
@@ -135,7 +140,6 @@ async def set_scan_cron_endpoint(req: ScanCronRequest):
 def _spawn_scan(job_id: str) -> None:
     """Run a scan as a detached task, swallowing any exception so it never leaks
     as an unretrieved Future warning."""
-
     async def _run() -> None:
         try:
             await run_scan(job_id)
@@ -144,6 +148,16 @@ def _spawn_scan(job_id: str) -> None:
 
     task = asyncio.create_task(_run())
     task.add_done_callback(lambda t: t.exception())
+
+
+async def _scheduled_scan() -> None:
+    """Cron job target: coroutine function so AsyncIOScheduler runs it on the
+    event loop (a plain lambda would execute in a worker thread with no
+    running loop and fail). Swallows exceptions like _spawn_scan."""
+    try:
+        await run_scan(uuid.uuid4().hex)
+    except Exception:
+        pass
 
 
 async def _bootstrap_discover(max_attempts: int = 90, interval: float = 2.0) -> None:
