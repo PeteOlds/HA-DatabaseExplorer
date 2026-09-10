@@ -1634,7 +1634,10 @@ async function renderAbout() {
     el("p", {}, "2. Click <strong>Discover databases</strong> to auto-detect HA Recorder + InfluxDB"),
     el("p", {}, "3. Use <strong>Dashboard</strong> for overview, <strong>Entities</strong> for per-entity analysis"),
     el("p", {}, "4. Click any <strong>entity_id</strong> in Entities tab to see recent state values"),
-    el("p", {}, "5. Use <strong>Retention</strong> column in Setup to manage purge policies"),
+    el("p", {}, "5. Use the <strong>Overlap</strong> tab to find duplicated entities and generate exclusions"),
+    el("p", {}, "6. Use the <strong>Usage</strong> tab to see where each entity is referenced (automations, dashboards, templates)"),
+    el("p", {}, "7. Use the <strong>InfluxDB</strong> tab to review measurements and retention policies"),
+    el("p", {}, "8. Use <strong>Retention</strong> column in Setup to manage purge policies"),
     el("hr", {}),
     el("p", { class: "muted" }, "Built for Home Assistant. Local-only, privacy-first.")
   );

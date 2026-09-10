@@ -14,8 +14,18 @@ local-only, zero telemetry.
 - Async deep-scan cached in a local SQLite store for instant dashboard rendering.
 - Executive dashboard: total footprint, storage by engine, storage by HA domain.
 - Entity Bloat Explorer: sortable/searchable/filterable table of every tracked entity.
-- Overlap Matrix: entities logged to multiple databases, with a one-click
+- Overlap Matrix: entities logged to multiple databases (exact plus normalised
+  `domain.X` ≡ InfluxDB-tag-`X` matching), with a one-click
   `recorder: exclude:` YAML generator.
+- Usage tab: where each entity is referenced (automations, scripts, scenes,
+  dashboards, templates, helpers, energy, configs) with Used/Unused/Orphaned/
+  Dangling verdicts, per-type counts, and drill-down to exact locations.
+- Orphan detection: entities in a database but gone from live HA states
+  (requires `homeassistant_api: true`), with last-seen dates.
+- InfluxDB Measurements tab: per-measurement recency, point counts, legacy
+  (pre-`default_measurement`) detection, and drop actions.
+- Cross-tab navigation: overlap rows, entity badges, and measurement names link
+  across Entities, Overlap, InfluxDB and Usage views.
 - Scheduled deep scan (default `30 3 * * *`) + manual "Trigger Deep Scan".
 - Credentials encrypted at rest (Fernet); secrets scrubbed from all API responses.
 
@@ -97,9 +107,29 @@ uvicorn app.main:app --port 8099
 - **Retention Advisor** (bottom): enter retention days → calculates estimated freed space per entity
 
 ### Overlap Tab (Overlap Matrix)
-- Shows entities present in multiple databases
+- Shows entities present in multiple databases (exact matches plus normalised
+  `domain.X` ≡ InfluxDB-tag-`X` matches, labelled `≡ normalised`)
 - ★ = primary database (fewest records)
+- Sortable Entity / Stored in / Redundant / Match columns
 - Check entities → generates `recorder: exclude:` YAML for HA configuration
+- Click an entity → jumps to the Entities tab filtered to it
+
+### Usage Tab (Entity Usage)
+- Where each entity is referenced: automations, scripts, scenes, dashboards,
+  templates, helpers, energy, configs — with per-type occurrence counts
+- Verdicts: **Used** (any reference, even disabled counts), **Unused** (zero
+  references), **Orphaned** (in DB, gone from live HA), **Dangling**
+  (referenced but in no database — usually renamed/deleted leftovers)
+- Filter by verdict and by object type (e.g. all entities used in templates)
+- Click an entity → drill-down modal with exact locations
+- **Rescan usage** button re-scans config surfaces on demand
+
+### InfluxDB Tab (Measurements)
+- Every measurement with last-point time, point count, estimated size
+- Legacy dotted measurements flagged (stale pre-`default_measurement` data)
+- Per-measurement entity mapping (shared measurements list their entities)
+- **Drop** legacy measurements with confirmation
+- Sortable columns; elapsed-time progress while loading
 
 ### Setup Tab (Retention Management)
 - **Configured databases table** shows retention policy per database:
@@ -126,6 +156,12 @@ uvicorn app.main:app --port 8099
 | POST | `/api/databases/{name}/retention` | Set retention (body varies by engine) |
 | POST | `/api/databases/{name}/retention/refresh` | Re-read from HA config |
 | GET | `/api/entities/{db_id}/{entity_id}/values?limit=100` | Entity state history (drill-down) |
+| GET | `/api/usage/orphans` | Entities in DB but absent from live HA states |
+| GET | `/api/metrics/usage` | Per-entity reference counts, verdicts, drill-down locations |
+| POST | `/api/usage/rescan` | Re-scan config surfaces for references |
+| GET | `/api/tools/influxdb-measurements` | Per-measurement recency, counts, entity mapping |
+| POST | `/api/tools/influxdb-drop-measurement` | Drop a legacy measurement (confirmed) |
+| POST | `/api/databases/{name}/test` | Re-test a saved connection, persist status |
 
 ### Keyboard Shortcuts
 - `Esc` closes any open modal
