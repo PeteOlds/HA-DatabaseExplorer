@@ -119,6 +119,9 @@ button.action {
 
 /* Overlap table: structured rows instead of one dense line per entity */
 .ovlp td { vertical-align: top; }
+/* Setup retention actions: two buttons must fit side by side, not clip */
+#view td.ret-actions { white-space: normal; }
+#view td.ret-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovlp code { font-size: 12.5px; }
 .pill {
   display: inline-block;

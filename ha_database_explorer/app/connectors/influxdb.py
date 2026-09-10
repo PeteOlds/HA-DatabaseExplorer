@@ -65,6 +65,8 @@ class InfluxDBConnector(BaseConnector):
             data = r.json()
         out = []
         for res in data.get("results", []):
+            if res.get("error"):
+                raise RuntimeError(f"influxdb error: {res['error']}")
             for ser in res.get("series", []):
                 for row in ser.get("values", []):
                     out.append(row)
@@ -183,8 +185,9 @@ class InfluxDBConnector(BaseConnector):
             parts.append(f"DURATION {duration}")
             if shard_group_duration:
                 parts.append(f"SHARD GROUP DURATION {shard_group_duration}")
-            if replica_n is not None:
-                parts.append(f"REPLICATION {replica_n}")
+            # REPLICATION is mandatory in InfluxQL CREATE/ALTER (omitting it
+            # is a parse error -> HTTP 400); single-node setups use 1.
+            parts.append(f"REPLICATION {replica_n if replica_n is not None else 1}")
             if make_default:
                 parts.append("DEFAULT")
             

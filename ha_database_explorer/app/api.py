@@ -419,6 +419,36 @@ async def update_database(name: str, cfg: DBConfig):
     return {"updated": True, "config": safe_config_dump(conn)}
 
 
+@app.post("/api/databases/{name}/test")
+async def retest_database(name: str):
+    """Re-test a saved connection using stored credentials and persist status.
+
+    Used to refresh stale status badges without requiring the user to
+    re-enter credentials. Preserves cached size/scan/retention fields.
+    """
+    conns = load_connections()
+    matching = [c for c in conns if c.get("connection_name") == name]
+    if not matching:
+        raise HTTPException(status_code=404, detail="database not found")
+    conn = matching[0]
+    try:
+        connector = build_connector(conn["engine"], name, conn)
+        ok = await connector.test_connection()
+    except Exception:
+        ok = False
+    cached = next((r for r in await get_databases() if r.get("connection_name") == name), {})
+    await upsert_database(
+        conn["engine"],
+        name,
+        cached.get("total_size_mb"),
+        "connected" if ok else "auth_failed",
+        cached.get("scan_duration_s"),
+        retention_days=cached.get("retention_days"),
+        influxdb_rp_json=cached.get("influxdb_rp_json"),
+    )
+    return {"connection_name": name, "connected": ok}
+
+
 @app.post("/api/databases/discover")
 async def discover():
     return await discover_all()

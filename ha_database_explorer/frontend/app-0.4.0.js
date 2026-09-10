@@ -90,6 +90,7 @@ async function renderDiscovery() {
       "</colgroup>" +
       "<thead><tr><th>Database</th><th>Engine</th><th>Host</th><th>Status</th><th>Last scanned</th><th>Duration</th><th>Retention</th><th title='Retention actions for this database'>Manage</th><th>Connection</th></tr></thead>";
     const cfgBody = el("tbody");
+    const retestQueue = [];
     configured.forEach((d) => {
       const scanned = d.last_scanned ? new Date(d.last_scanned).toLocaleString() : "never";
       const duration = d.scan_duration_s != null ? `${d.scan_duration_s}s` : "—";
@@ -143,10 +144,27 @@ async function renderDiscovery() {
           `</td>`
       );
       cfgBody.append(tr);
+      if ((d.status || "") !== "connected") retestQueue.push({ name: d.connection_name, row: tr });
     });
     cfgTable.append(cfgBody);
     cfgCard.append(cfgTable);
     view.append(cfgCard);
+    // Stale badges lie: re-test anything not currently connected and update
+    // the status cell in place (server persists the fresh status too).
+    retestQueue.forEach(({ name, row }) => {
+      const badge = row.querySelector("td.status");
+      if (badge) badge.textContent += " (testing…)";
+      api(`/api/databases/${encodeURIComponent(name)}/test`, { method: "POST" })
+        .then(r => {
+          if (!badge) return;
+          badge.textContent = r.connected ? "connected" : "auth_failed";
+          badge.className = `status ${r.connected ? "connected" : "auth_failed"}`;
+          badge.title = r.connected ? "Re-tested just now" : "Re-test failed — check host, credentials and network";
+        })
+        .catch(() => {
+          if (badge) badge.title = "Re-test request failed";
+        });
+    });
   }
 
   // Scan Schedule card
@@ -399,12 +417,12 @@ async function manageInfluxRPs(connectionName) {
   row1.append(el("label", {}, "Name"), nameInput, el("label", {}, "Duration"), durationInput);
   
   const row2 = el("div", { style: "display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap" });
-  const sgInput = el("input", { type: "text", placeholder: "Shard group duration (optional)", style: "flex:1;min-width:150px;padding:8px" });
-  const replInput = el("input", { type: "number", placeholder: "Replication N (optional)", style: "width:100px;padding:8px" });
+  const sgInput = el("input", { type: "text", placeholder: "Shard group duration (optional)", title: "How long each shard keeps data — affects compaction and how finely old data can be dropped. Blank = server default.", style: "flex:1;min-width:150px;padding:8px" });
+  const replInput = el("input", { type: "number", placeholder: "Replication N (optional)", title: "How many independent copies to keep. Almost always 1 on single-node setups (InfluxDB requires a value).", style: "width:100px;padding:8px" });
   const defaultCheck = el("input", { type: "checkbox", id: "rp-default" });
   const defaultLabel = el("label", { for: "rp-default", style: "display:flex;align-items:center;gap:4px" }, "Make default");
   defaultLabel.prepend(defaultCheck);
-  row2.append(el("label", {}, "Shard Group"), sgInput, el("label", {}, "Replica N"), replInput, defaultLabel);
+  row2.append(el("label", { title: "How long each shard keeps data — affects compaction and how finely old data can be dropped. Blank = server default." }, "Shard Group"), sgInput, el("label", { title: "How many independent copies to keep. Almost always 1 on single-node setups (InfluxDB requires a value)." }, "Replica N"), replInput, defaultLabel);
   
   const saveBtn = el("button", { class: "action", onclick: `saveInfluxRP('${connectionName}')` }, "Save RP");
   const statusSpan = el("span", { class: "muted", style: "margin-left:12px" });
