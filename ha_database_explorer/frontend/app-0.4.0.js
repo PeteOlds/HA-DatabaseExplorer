@@ -395,11 +395,14 @@ async function manageInfluxRPs(connectionName) {
         <td style="padding:8px">${rp.shard_group_duration || "—"}</td>
         <td style="padding:8px">${rp.replica_n || "—"}</td>
         <td style="padding:8px">${rp.default ? "★" : "—"}</td>
-        <td style="padding:8px">
-          <button class="action small" onclick="editInfluxRP('${connectionName}', '${JSON.stringify(rp).replace(/"/g, '\\"')}')" title="Edit this retention policy's duration and settings">Edit</button>
-          <button class="action small muted" onclick="deleteInfluxRP('${connectionName}', '${rp.name}')" title="Delete this retention policy (irreversible)">Delete</button>
-        </td>
       `;
+      const actionTd = el("td", { style: "padding:8px" });
+      const editBtn = el("button", { class: "action small", title: "Edit this retention policy's duration and settings" }, "Edit");
+      editBtn.onclick = () => editInfluxRP(connectionName, { ...rp });
+      const delBtn = el("button", { class: "action small muted", title: "Delete this retention policy (irreversible)" }, "Delete");
+      delBtn.onclick = () => deleteInfluxRP(connectionName, rp.name);
+      actionTd.append(editBtn, " ", delBtn);
+      tr.append(actionTd);
       tbody.append(tr);
     });
     table.append(tbody);
@@ -446,9 +449,9 @@ async function manageInfluxRPs(connectionName) {
       return;
     }
     
-    // Validate duration
-    if (duration !== "INF" && !/^\d+[dhw]$/.test(duration)) {
-      statusSpan.textContent = "Duration must be 'INF' or format like '30d', '7d', '24h', '4w'";
+    // Validate duration (InfluxDB Go-style spans: 30d, 24h, 30m, 0s, 168h0m0s, INF)
+    if (!isInfluxDuration(duration)) {
+      statusSpan.textContent = "Duration must be 'INF' or like '30d', '7d', '24h', '30m', '0s'";
       return;
     }
     
@@ -977,6 +980,10 @@ async function refreshRetention(connectionName) {
 }
 
 // InfluxDB RP Edit/Delete (called from modal)
+// InfluxDB durations: INF or Go-style spans like 30d, 7d, 24h, 30m, 0s, 168h0m0s.
+function isInfluxDuration(s) {
+  return s === "INF" || /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h|d|w))+$/.test(s);
+}
 async function editInfluxRP(connectionName, rp) {
   // rp may arrive as a JSON string from the inline onclick handler
   if (typeof rp === "string") {
@@ -1011,7 +1018,7 @@ async function editInfluxRP(connectionName, rp) {
       const make_default = defaultCheck.checked;
       
       if (!name || !duration) return alert("Name and duration required");
-      if (duration !== "INF" && !/^\d+[dhw]$/.test(duration)) return alert("Duration must be 'INF' or format like '30d', '7d', '24h', '4w'");
+      if (!isInfluxDuration(duration)) return alert("Duration must be 'INF' or like '30d', '7d', '24h', '30m', '0s'");
       
       saveBtn.disabled = true;
       saveBtn.textContent = "updating…";
