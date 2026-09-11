@@ -72,6 +72,28 @@ class InfluxDBConnector(BaseConnector):
                     out.append(row)
         return out
 
+    async def _exec(self, q: str) -> None:
+        """Run a write query (CREATE/ALTER/DROP) via POST.
+
+        Writes over GET are deprecated by InfluxDB and may be refused, so
+        DDL always goes through POST. Raises on HTTP or InfluxDB errors.
+        """
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.post(
+                f"{self.base}/query",
+                params={"db": self.database},
+                data={"q": q},
+                **self._auth(),
+            )
+            r.raise_for_status()
+            try:
+                data = r.json()
+            except Exception:
+                return
+        for res in (data or {}).get("results", []):
+            if res.get("error"):
+                raise RuntimeError(f"influxdb error: {res['error']}")
+
     async def entity_metrics(self) -> list[EntityMetric]:
         try:
             # Get all unique entity_ids from the database
@@ -183,16 +205,18 @@ class InfluxDBConnector(BaseConnector):
                 parts[0] = "CREATE " + parts[0]
             
             parts.append(f"DURATION {duration}")
-            if shard_group_duration:
+            if shard_group_duration and not exists:
+                # NOTE: this InfluxDB build rejects SHARD GROUP DURATION on
+                # ALTER (parse error), so it is only sent on CREATE.
                 parts.append(f"SHARD GROUP DURATION {shard_group_duration}")
             # REPLICATION is mandatory in InfluxQL CREATE/ALTER (omitting it
             # is a parse error -> HTTP 400); single-node setups use 1.
             parts.append(f"REPLICATION {replica_n if replica_n is not None else 1}")
             if make_default:
                 parts.append("DEFAULT")
-            
+
             query = " ".join(parts)
-            await self._query(query)
+            await self._exec(query)
             return True
         except Exception:
             return False
@@ -201,7 +225,15 @@ class InfluxDBConnector(BaseConnector):
         """Delete a retention policy."""
         try:
             query = f'DROP RETENTION POLICY "{name}" ON "{self.database}"'
-            await self._query(query)
+            await self._exec(query)
+            return True
+        except Exception:
+            return False
+
+    async def delete_measurement(self, name: str) -> bool:
+        """Drop an entire measurement (all its points, irreversibly)."""
+        try:
+            await self._exec(f'DROP MEASUREMENT "{name}"')
             return True
         except Exception:
             return False

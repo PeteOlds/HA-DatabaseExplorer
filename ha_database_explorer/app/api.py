@@ -783,10 +783,14 @@ async def influxdb_drop_measurement(req: dict):
         return {"error": "InfluxDB connector does not support dropping measurements"}
     
     try:
-        await connector._query(f'DROP MEASUREMENT "{name}"')
+        ok = await connector.delete_measurement(name)
+        if not ok:
+            return {"error": f"InfluxDB refused to drop {name}"}
         return {"success": True, "message": f"Dropped measurement {name}"}
     except Exception as e:
         return {"error": str(e)}
+
+
 @app.get("/api/tools/influxdb-measurements")
 async def influxdb_measurements(db_id: str | None = None):
     """Get recency info for all InfluxDB measurements in a database."""

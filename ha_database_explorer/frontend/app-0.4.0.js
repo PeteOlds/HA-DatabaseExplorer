@@ -1006,6 +1006,12 @@ async function editInfluxRP(connectionName, rp) {
   if (sgInput) sgInput.value = rp.shard_group_duration || "";
   if (replInput) replInput.value = rp.replica_n || "";
   if (defaultCheck) defaultCheck.checked = rp.default;
+  // InfluxDB cannot ALTER the shard group duration of an existing policy,
+  // so lock the field in edit mode (it stays editable when creating).
+  if (sgInput) {
+    sgInput.disabled = true;
+    sgInput.title = "Shard group duration cannot be changed on an existing policy (InfluxDB limitation) — create a new policy instead.";
+  }
   
   // Change button to update mode
   if (saveBtn) {
