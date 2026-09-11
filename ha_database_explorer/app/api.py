@@ -308,10 +308,12 @@ async def set_retention(name: str, req: dict):
             if not duration:
                 raise HTTPException(status_code=400, detail="duration required for create/alter")
             
-            # Validate duration format: INF or N[d|h|w]
+            # Validate duration: INF or Go-style spans (30d, 24h, 30m, 0s,
+            # 168h0m0s) as InfluxDB itself accepts. Mirrors the frontend
+            # isInfluxDuration check; InfluxDB re-validates on write.
             import re
-            if duration != "INF" and not re.match(r'^\d+[dhw]$', duration):
-                raise HTTPException(status_code=400, detail="duration must be 'INF' or format like '30d', '7d', '24h', '4w'")
+            if duration != "INF" and not re.match(r"^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h|d|w))+$", duration):
+                raise HTTPException(status_code=400, detail="duration must be 'INF' or like '30d', '7d', '24h', '30m', '0s'")
             
             shard_group_duration = rp_req.get("shard_group_duration")
             replica_n = rp_req.get("replica_n")
